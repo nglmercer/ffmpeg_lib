@@ -1,0 +1,39 @@
+{
+  "name": "ffmpeg-video-processor",
+  "version": "1.0.0",
+  "description": "FFmpeg-based video processor for multi-quality video processing",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "bun run dist/index.js",
+    "dev": "bun run src/index.ts",
+    "build": "tsc && bun build --compile --target=bun-linux-x64 --outfile=binaries/video-processor-linux dist/index.js && bun build --compile --target=bun-darwin-x64 --outfile=binaries/video-processor-macos dist/index.js && bun build --compile --target=bun-windows-x64 --outfile=binaries/video-processor-win.exe dist/index.js",
+    "install-ffmpeg": "node install-ffmpeg.js",
+    "install-ffmpeg:ts": "ts-node install-ffmpeg.ts",
+    "update-ffmpeg": "bun run dist/scripts/update-ffmpeg.js",
+    "test": "bun test",
+    "type-check": "tsc --noEmit"
+  },
+  "bin": {
+    "video-processor": "./dist/index.js"
+  },
+  "keywords": [
+    "ffmpeg",
+    "video",
+    "processing",
+    "converter"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "fs-extra": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.5",
+    "@types/bun": "^1.2.23",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^20.10.5",
+    "typescript": "^5.3.3"
+  }
+}
