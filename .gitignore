@@ -137,3 +137,5 @@ binaries/*
 *.mp4
 *.png
 *.jpg
+*.aac
+generated-media/*
