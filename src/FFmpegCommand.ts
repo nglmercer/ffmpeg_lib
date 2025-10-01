@@ -61,6 +61,8 @@ export interface ProbeData {
         bit_rate?: number;
         sample_rate?: number;
         channels?: number;
+        tags?: Record<string, string>;
+        disposition?: Record<string, number>;
     }>;
 }
 
