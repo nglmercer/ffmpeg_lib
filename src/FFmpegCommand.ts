@@ -68,6 +68,8 @@ export class FFmpegCommand extends EventEmitter {
     private ffmpegPath: string;
     private ffprobePath: string;
     private inputFiles: string[] = [];
+    // Per-input options that must appear immediately before their corresponding -i
+    private inputPerFileOpts: string[][] = [];
     private outputFile: string = '';
     private inputOpts: string[] = [];
     private outputOpts: string[] = [];
@@ -94,6 +96,8 @@ export class FFmpegCommand extends EventEmitter {
     
     input(source: string): this {
         this.inputFiles.push(source);
+        // Keep per-file options aligned with inputs
+        this.inputPerFileOpts.push([]);
         return this;
     }
 
@@ -273,6 +277,24 @@ export class FFmpegCommand extends EventEmitter {
         return this;
     }
 
+    /**
+     * Attach options to a specific input so they appear immediately
+     * before its corresponding `-i` argument (e.g., `-f lavfi`).
+     */
+    inputWithOptions(source: string, options: string | string[]): this {
+        const tokens = Array.isArray(options)
+            ? options.flatMap(opt => (typeof opt === 'string' ? this.tokenizeOptionString(opt) : [opt as any]))
+            : this.tokenizeOptionString(options);
+        this.inputFiles.push(source);
+        this.inputPerFileOpts.push(tokens);
+        return this;
+    }
+
+    /** Convenience for adding a lavfi input (e.g., testsrc, sine, color) */
+    inputLavfi(source: string): this {
+        return this.inputWithOptions(source, ['-f', 'lavfi']);
+    }
+
     preset(preset: string): this {
         this.outputOpts.push('-preset', preset);
         return this;
@@ -294,8 +316,12 @@ export class FFmpegCommand extends EventEmitter {
         }
 
         // Input files
-        for (const input of this.inputFiles) {
-            args.push('-i', input);
+        for (let i = 0; i < this.inputFiles.length; i++) {
+            const perInputOpts = this.inputPerFileOpts[i] || [];
+            if (perInputOpts.length > 0) {
+                args.push(...perInputOpts);
+            }
+            args.push('-i', this.inputFiles[i]);
         }
 
         // Complex filters
@@ -507,6 +533,7 @@ export class FFmpegCommand extends EventEmitter {
         });
         
         cloned.inputFiles = [...this.inputFiles];
+        cloned.inputPerFileOpts = this.inputPerFileOpts.map(arr => [...arr]);
         cloned.outputFile = this.outputFile;
         cloned.inputOpts = [...this.inputOpts];
         cloned.outputOpts = [...this.outputOpts];

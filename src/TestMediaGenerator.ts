@@ -1,6 +1,6 @@
 import fs from 'fs-extra';
 import path from 'path';
-import { execSync } from 'child_process';
+import { FFmpegCommand } from './FFmpegCommand';
 
 interface VideoOptions {
   duration?: number;
@@ -70,16 +70,19 @@ class TestMediaGenerator {
     await fs.ensureDir(this.outputDir);
     const outputPath = path.join(this.outputDir, filename);
 
-    // Generar video con patrón de test (testsrc)
-    const command = `"${this.ffmpegPath}" -f lavfi -i testsrc=duration=${duration}:size=${width}x${height}:rate=${fps} \
-      -c:v ${codec} -pix_fmt ${pixelFormat} -b:v ${bitrate} \
-      -y "${outputPath}"`;
+    // Generar video con patrón de test (testsrc) usando FFmpegCommand
+    const cmd = new FFmpegCommand({ ffmpegPath: this.ffmpegPath, ffprobePath: this.ffprobePath });
+    cmd
+      .inputOptions('-f lavfi')
+      .input(`testsrc=duration=${duration}:size=${width}x${height}:rate=${fps}`)
+      .videoCodec(codec)
+      .outputOptions(['-pix_fmt', pixelFormat])
+      .videoBitrate(bitrate)
+      .output(outputPath);
 
     try {
-      execSync(command, { stdio: 'pipe' });
-
+      await cmd.run();
       const stats = await fs.stat(outputPath);
-      
       return {
         path: outputPath,
         size: stats.size,
@@ -117,19 +120,20 @@ class TestMediaGenerator {
     await fs.ensureDir(this.outputDir);
     const outputPath = path.join(this.outputDir, filename);
 
-    // Generar video con patrón visual y audio (tono)
-    const command = `"${this.ffmpegPath}" \
-      -f lavfi -i testsrc=duration=${duration}:size=${width}x${height}:rate=${fps} \
-      -f lavfi -i sine=frequency=${frequency}:duration=${duration}:sample_rate=${sampleRate} \
-      -c:v libx264 -pix_fmt yuv420p \
-      -c:a aac -b:a 128k \
-      -y "${outputPath}"`;
+    // Generar video con patrón visual y audio (tono) usando FFmpegCommand
+    const cmd = new FFmpegCommand({ ffmpegPath: this.ffmpegPath, ffprobePath: this.ffprobePath });
+    cmd
+      .inputLavfi(`testsrc=duration=${duration}:size=${width}x${height}:rate=${fps}`)
+      .inputLavfi(`sine=frequency=${frequency}:duration=${duration}:sample_rate=${sampleRate}`)
+      .videoCodec('libx264')
+      .outputOptions(['-pix_fmt', 'yuv420p'])
+      .audioCodec('aac')
+      .audioBitrate('128k')
+      .output(outputPath);
 
     try {
-      execSync(command, { stdio: 'pipe' });
-
+      await cmd.run();
       const stats = await fs.stat(outputPath);
-      
       return {
         path: outputPath,
         size: stats.size,
@@ -167,17 +171,19 @@ class TestMediaGenerator {
     await fs.ensureDir(this.outputDir);
     const outputPath = path.join(this.outputDir, filename);
 
-    // Generar audio con tono
-    const command = `"${this.ffmpegPath}" \
-      -f lavfi -i sine=frequency=${frequency}:duration=${duration}:sample_rate=${sampleRate} \
-      -ac ${channels} -c:a ${codec} -b:a ${bitrate} \
-      -y "${outputPath}"`;
+    // Generar audio con tono usando FFmpegCommand
+    const cmd = new FFmpegCommand({ ffmpegPath: this.ffmpegPath, ffprobePath: this.ffprobePath });
+    cmd
+      .inputOptions('-f lavfi')
+      .input(`sine=frequency=${frequency}:duration=${duration}:sample_rate=${sampleRate}`)
+      .audioChannels(channels)
+      .audioCodec(codec)
+      .audioBitrate(bitrate)
+      .output(outputPath);
 
     try {
-      execSync(command, { stdio: 'pipe' });
-
+      await cmd.run();
       const stats = await fs.stat(outputPath);
-      
       return {
         path: outputPath,
         size: stats.size,
@@ -213,17 +219,17 @@ class TestMediaGenerator {
     await fs.ensureDir(this.outputDir);
     const outputPath = path.join(this.outputDir, filename);
 
-    // Generar imagen con color sólido
-    const command = `"${this.ffmpegPath}" \
-      -f lavfi -i color=c=${color}:s=${width}x${height}:d=1 \
-      -frames:v 1 \
-      -y "${outputPath}"`;
+    // Generar imagen con color sólido usando FFmpegCommand
+    const cmd = new FFmpegCommand({ ffmpegPath: this.ffmpegPath, ffprobePath: this.ffprobePath });
+    cmd
+      .inputOptions('-f lavfi')
+      .input(`color=c=${color}:s=${width}x${height}:d=1`)
+      .outputOptions(['-frames:v', '1'])
+      .output(outputPath);
 
     try {
-      execSync(command, { stdio: 'pipe' });
-
+      await cmd.run();
       const stats = await fs.stat(outputPath);
-      
       return {
         path: outputPath,
         size: stats.size,
@@ -346,12 +352,7 @@ class TestMediaGenerator {
    */
   async validateMediaFile(filePath: string): Promise<boolean> {
     try {
-      const ffprobePath = this.resolveFFprobePath();
-      
-      execSync(`"${ffprobePath}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`, {
-        stdio: 'pipe'
-      });
-      
+      await FFmpegCommand.probe(filePath, { ffprobePath: this.ffprobePath || this.resolveFFprobePath() });
       return true;
     } catch (error) {
       return false;
@@ -363,14 +364,8 @@ class TestMediaGenerator {
    */
   async getMediaInfo(filePath: string): Promise<any> {
     try {
-      const ffprobePath = this.resolveFFprobePath();
-      
-      const output = execSync(
-        `"${ffprobePath}" -v quiet -print_format json -show_format -show_streams "${filePath}"`,
-        { encoding: 'utf8' }
-      );
-      
-      return JSON.parse(output);
+      const info = await FFmpegCommand.probe(filePath, { ffprobePath: this.ffprobePath || this.resolveFFprobePath() });
+      return info;
     } catch (error) {
       throw new Error(`Failed to get media info: ${(error as Error).message}`);
     }
