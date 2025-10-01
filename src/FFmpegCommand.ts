@@ -76,6 +76,10 @@ export class FFmpegCommand extends EventEmitter {
     private complexFiltersArray: string[] = [];
     private timeout?: number;
     private killed = false;
+    
+    private tokenizeOptionString(str: string): string[] {
+        return tokenizeOptionStringInternal(str);
+    }
 
     constructor(options?: FFmpegOptions) {
         super();
@@ -245,13 +249,27 @@ export class FFmpegCommand extends EventEmitter {
     
     outputOptions(options: string | string[]): this {
         const optsArray = Array.isArray(options) ? options : [options];
-        this.outputOpts.push(...optsArray);
+        for (const opt of optsArray) {
+            if (typeof opt === 'string') {
+                const tokens = this.tokenizeOptionString(opt);
+                this.outputOpts.push(...tokens);
+            } else {
+                this.outputOpts.push(opt as any);
+            }
+        }
         return this;
     }
 
     inputOptions(options: string | string[]): this {
         const optsArray = Array.isArray(options) ? options : [options];
-        this.inputOpts.push(...optsArray);
+        for (const opt of optsArray) {
+            if (typeof opt === 'string') {
+                const tokens = this.tokenizeOptionString(opt);
+                this.inputOpts.push(...tokens);
+            } else {
+                this.inputOpts.push(opt as any);
+            }
+        }
         return this;
     }
 
@@ -507,4 +525,29 @@ export function setFFmpegPath(path: string): void {
 
 export function setFFprobePath(path: string): void {
     // This would set a global path if needed
+}
+
+// Internal utility for tokenizing option strings while preserving quoted values
+// Placed outside the class scope to avoid re-creating per instance if needed
+// but referenced via class method for clarity.
+// Note: Node spawn passes each array element as a single argv token; we split
+// combined option strings like "-movflags +faststart" into ["-movflags", "+faststart"].
+// Quoted segments like 'title="My Video"' become ["title=My Video"].
+export function tokenizeOptionStringInternal(str: string): string[] {
+    const tokens: string[] = [];
+    const regex = /"([^"]*)"|'([^']*)'|[^\s]+/g;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(str)) !== null) {
+        const quotedDouble = match[1];
+        const quotedSingle = match[2];
+        const unquoted = match[0];
+        if (quotedDouble !== undefined) {
+            tokens.push(quotedDouble);
+        } else if (quotedSingle !== undefined) {
+            tokens.push(quotedSingle);
+        } else {
+            tokens.push(unquoted);
+        }
+    }
+    return tokens;
 }

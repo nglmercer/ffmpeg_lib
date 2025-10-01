@@ -133,3 +133,7 @@ dist
 bun.lockb
 
 binaries/*
+*.mp3
+*.mp4
+*.png
+*.jpg
