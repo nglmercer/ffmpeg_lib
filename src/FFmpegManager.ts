@@ -2,7 +2,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import { execSync } from 'child_process';
 import crypto from 'crypto';
-
+import { MediaMetadataExtractor, MediaMetadata, MediaType } from './MediaMetadataExtractor.js';
 interface FFmpegUrls {
     win32: string;
     linux: string;
@@ -36,7 +36,7 @@ class FFmpegManager {
     public ffmpegUrls: FFmpegUrls;
     private cacheFile: string;
     private manifestFile: string;
-
+    private metadataExtractor?: MediaMetadataExtractor;
     constructor(customBinariesDir?: string) {
         this.binariesDir = customBinariesDir || path.join(__dirname, '..', 'binaries');
         this.platform = this.getPlatform();
@@ -379,6 +379,81 @@ class FFmpegManager {
                 console.log(`🗑️  Removed: ${path.basename(file)}`);
             }
         }
+    }
+        /**
+     * Obtiene la instancia del extractor de metadatos
+     */
+    getMetadataExtractor(): MediaMetadataExtractor {
+        if (!this.metadataExtractor) {
+            const ffprobePath = this.getFFprobePath();
+            this.metadataExtractor = new MediaMetadataExtractor(ffprobePath);
+        }
+        return this.metadataExtractor;
+    }
+
+    /**
+     * Extrae metadatos completos de un archivo multimedia
+     * @param filePath Ruta al archivo multimedia
+     * @returns Metadatos completos del archivo
+     */
+    async extractMetadata(filePath: string): Promise<MediaMetadata> {
+        await this.verifyBinaries();
+        const extractor = this.getMetadataExtractor();
+        return await extractor.extractMetadata(filePath);
+    }
+
+    /**
+     * Obtiene solo el tipo de medio de un archivo
+     * @param filePath Ruta al archivo
+     * @returns Tipo de medio (video, audio, image, etc.)
+     */
+    async getMediaType(filePath: string): Promise<MediaType> {
+        await this.verifyBinaries();
+        const extractor = this.getMetadataExtractor();
+        return await extractor.getMediaType(filePath);
+    }
+
+    /**
+     * Obtiene información básica de un archivo (más rápido)
+     * @param filePath Ruta al archivo
+     * @returns Información básica (tipo, duración, tamaño, formato)
+     */
+    async getBasicInfo(filePath: string): Promise<{
+        type: MediaType;
+        duration: number;
+        size: number;
+        format: string;
+    }> {
+        await this.verifyBinaries();
+        const extractor = this.getMetadataExtractor();
+        return await extractor.getBasicInfo(filePath);
+    }
+
+    /**
+     * Verifica si un archivo es un video válido
+     */
+    async isVideo(filePath: string): Promise<boolean> {
+        await this.verifyBinaries();
+        const extractor = this.getMetadataExtractor();
+        return await extractor.isVideo(filePath);
+    }
+
+    /**
+     * Verifica si un archivo es un audio válido
+     */
+    async isAudio(filePath: string): Promise<boolean> {
+        await this.verifyBinaries();
+        const extractor = this.getMetadataExtractor();
+        return await extractor.isAudio(filePath);
+    }
+
+    /**
+     * Verifica si un archivo es una imagen válida
+     */
+    async isImage(filePath: string): Promise<boolean> {
+        await this.verifyBinaries();
+        const extractor = this.getMetadataExtractor();
+        return await extractor.isImage(filePath);
     }
 }
 
