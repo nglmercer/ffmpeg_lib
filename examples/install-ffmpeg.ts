@@ -5,7 +5,7 @@
  * Este script descarga e instala los binarios de FFmpeg usando FFmpegManager
  */
 
-import { FFmpegManager } from './src/index';
+import { FFmpegManager } from '../src/index';
 
 async function main(): Promise<void> {
     console.log('🚀 Iniciando instalación de FFmpeg...\n');
