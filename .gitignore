@@ -139,3 +139,6 @@ binaries/*
 *.jpg
 *.aac
 generated-media/*
+*.m3u8
+hls-output/*
+custom-output/*
