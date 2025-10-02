@@ -2,13 +2,48 @@ import { FFmpegManager } from './FFmpegManager.js';
 import { FFmpegCommand, FFmpegOptions, VideoOptions, AudioOptions, ProgressInfo, ScreenshotOptions, ProbeData } from './FFmpegCommand.js';
 import { TestMediaGenerator, MediaFile, VideoOptions as TestVideoOptions, AudioOptions as TestAudioOptions, ImageOptions } from './TestMediaGenerator.js';
 import { MediaMetadataExtractor, MediaMetadata, MediaType, StreamInfo, FormatInfo, MetadataOptions } from './MediaMetadataExtractor.js';
+import { ResolutionUtils,type AspectRatio,type Resolution } from './utils/ResolutionUtils.js';
+// Import HLS module
+import { 
+  VideoProcessingOrchestrator,
+  AudioTrackProcessor,
+  SubtitleProcessor,
+  HLSSegmentationManager,
+  HLSPlaylistGenerator,
+  HLSVariantBuilder,
+  createDefaultAudioConfig,
+  createMultiLanguageAudioConfig,
+  isMultiChannelAudio,
+  getChannelLayoutDescription,
+  createDefaultSubtitleConfig,
+  getSubtitleStrategy
+} from './hls/index.js';
+
+// Import HLS types
+import type * as HLSTypes from './hls/types.js';
 
 // Export main classes
 export { 
   FFmpegManager,
   FFmpegCommand,
   TestMediaGenerator,
-  MediaMetadataExtractor
+  MediaMetadataExtractor,
+  
+  // HLS classes
+  VideoProcessingOrchestrator,
+  AudioTrackProcessor,
+  SubtitleProcessor,
+  HLSSegmentationManager,
+  HLSPlaylistGenerator,
+  HLSVariantBuilder,
+  
+  // HLS utility functions
+  createDefaultAudioConfig,
+  createMultiLanguageAudioConfig,
+  isMultiChannelAudio,
+  getChannelLayoutDescription,
+  createDefaultSubtitleConfig,
+  getSubtitleStrategy
 };
 
 // Export all interfaces and types
@@ -32,5 +67,14 @@ export type {
   MediaType,
   StreamInfo,
   FormatInfo,
-  MetadataOptions
+  MetadataOptions,
+  
+  // HLS types namespace
+  HLSTypes
 };
+// Export ResolutionUtils types
+export type {
+  AspectRatio,
+  Resolution
+};
+export { ResolutionUtils };
