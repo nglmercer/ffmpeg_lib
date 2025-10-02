@@ -12,20 +12,21 @@
     "resolveJsonModule": true,
     "declaration": true,
     "outDir": "./dist",
-    "rootDir": "./",
+    "rootDir": "./src",
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
     }
   },
   "include": [
-    "src/**/*",
-    "scripts/**/*",
-    "scripts/index.ts"
+    "src/**/*"
   ],
   "exclude": [
     "node_modules",
     "dist",
-    "binaries"
+    "binaries",
+    "examples",
+    "scripts",
+    "test"
   ]
 }

@@ -1,19 +1,32 @@
 {
-  "name": "ffmpeg-video-processor",
-  "version": "1.0.0",
-  "description": "FFmpeg-based video processor for multi-quality video processing",
+  "name": "ffmpeg-lib",
+  "version": "1.0.2",
+  "description": "FFmpeg-based library for video processing",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "type": "module",
   "scripts": {
     "start": "bun run dist/index.js",
     "dev": "bun run src/index.ts",
-    "build": "tsc && bun build --compile --target=bun-linux-x64 --outfile=binaries/video-processor-linux dist/index.js && bun build --compile --target=bun-darwin-x64 --outfile=binaries/video-processor-macos dist/index.js && bun build --compile --target=bun-windows-x64 --outfile=binaries/video-processor-win.exe dist/index.js",
-    "install-ffmpeg": "node install-ffmpeg.js",
-    "install-ffmpeg:ts": "ts-node install-ffmpeg.ts",
-    "update-ffmpeg": "bun run dist/scripts/update-ffmpeg.js",
+    "build": "tsc",
+    "build:binaries": "bun run build && bun build --compile --target=bun-linux-x64 --outfile=binaries/video-processor-linux dist/index.js && bun build --compile --target=bun-darwin-x64 --outfile=binaries/video-processor-macos dist/index.js && bun build --compile --target=bun-windows-x64 --outfile=binaries/video-processor-win.exe dist/index.js",
+    "prepublishOnly": "bun run build",
+    "publish": "bun publish",
+    "publish:npm": "npm publish --access public",
     "test": "bun test",
     "type-check": "tsc --noEmit"
   },
+  "files": [
+    "dist",
+    "readme.md",
+    "docs"
+  ],
   "bin": {
     "video-processor": "./dist/index.js"
   },
@@ -27,6 +40,7 @@
   "license": "MIT",
   "dependencies": {
     "adm-zip": "^0.5.16",
+    "ffmpeg-lib": "^1.0.1",
     "fs-extra": "^11.1.0"
   },
   "devDependencies": {
