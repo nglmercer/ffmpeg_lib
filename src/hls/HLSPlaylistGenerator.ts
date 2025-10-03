@@ -249,14 +249,19 @@ export class HLSPlaylistGenerator {
     generateSubtitlePlaylist(vttPath: string, duration: number): string {
         const lines: string[] = [];
 
+        // Headers obligatorios
         lines.push('#EXTM3U');
         lines.push(`#EXT-X-VERSION:${this.config.version}`);
         lines.push(`#EXT-X-TARGETDURATION:${Math.ceil(duration)}`);
         lines.push('#EXT-X-MEDIA-SEQUENCE:0');
         lines.push('#EXT-X-PLAYLIST-TYPE:VOD');
         lines.push('');
+        
+        // Segmento único con duración total
         lines.push(`#EXTINF:${duration.toFixed(6)},`);
         lines.push(vttPath);
+        
+        // End marker
         lines.push('#EXT-X-ENDLIST');
 
         return lines.join('\n');

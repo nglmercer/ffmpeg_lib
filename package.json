@@ -1,6 +1,6 @@
 {
   "name": "ffmpeg-lib",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "description": "FFmpeg-based library for video processing",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

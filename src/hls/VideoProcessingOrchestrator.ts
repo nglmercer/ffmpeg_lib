@@ -844,24 +844,21 @@ export class VideoProcessingOrchestrator extends EventEmitter {
             const info = subtitleInfo.find(s => s.language === result.language);
             if (!info) continue;
 
-            // Solo WebVTT es compatible nativamente con HLS
-            if (result.format !== 'vtt' && result.format !== 'webvtt') {
-                this.emit('warning', `Subtitle ${result.language} is in format ${result.format} and may not be HLS compatible without conversion.`);
-            }
+            // UN SOLO archivo VTT por idioma
             const vttFilename = `subtitle_${result.language}.vtt`;
             const playlistFilename = `subtitle_${result.language}.m3u8`;
             const playlistPath = path.join(subtitleDir, playlistFilename);
 
-            const originalVttPath = result.path;
+            // Copiar el VTT al directorio de subtítulos (si no está ya allí)
             const standardVttPath = path.join(subtitleDir, vttFilename);
-            
-            if (originalVttPath !== standardVttPath) {
-                await fs.copy(originalVttPath, standardVttPath);
+            if (result.path !== standardVttPath) {
+                await fs.copy(result.path, standardVttPath);
             }
 
+            // Generar playlist que apunta al VTT completo
             await this.playlistGenerator.writeSubtitlePlaylist(
                 playlistPath,
-                vttFilename,
+                vttFilename,  // Solo el nombre del archivo
                 duration
             );
 
@@ -872,7 +869,7 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                 isDefault: info.isDefault,
                 isForced: info.isForced,
                 playlistPath: `subtitles/${playlistFilename}`,
-                vttPath: `subtitles/${vttFilename}`,
+                vttPath: `subtitles/${vttFilename}`,  // Ruta relativa
                 groupId: 'subs'
             });
         }
