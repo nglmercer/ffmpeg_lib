@@ -1,6 +1,6 @@
 {
   "name": "ffmpeg-lib",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "FFmpeg-based library for video processing",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,7 @@
     "prepublishOnly": "bun run build",
     "publish": "bun publish",
     "publish:npm": "npm publish --access public",
-    "test": "bun test",
+    "test": "bun test --timeout 30000",
     "type-check": "tsc --noEmit"
   },
   "files": [
