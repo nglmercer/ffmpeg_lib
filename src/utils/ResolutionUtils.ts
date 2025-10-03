@@ -12,7 +12,7 @@ export interface AspectRatio {
 
 export class ResolutionUtils {
     // Escalas estándar para generar resoluciones (porcentajes del original)
-    private static readonly SCALE_FACTORS = [0.75, 0.5, 0.375, 0.25];
+    private static readonly SCALE_FACTORS = [0.75, 0.5, 0.375, 0.25, 0.1875, 0.125];
     
     // Alturas de referencia para nombrar las resoluciones
     private static readonly REFERENCE_HEIGHTS = [2160, 1440, 1080, 720, 480, 360, 240, 144];
@@ -74,8 +74,8 @@ export class ResolutionUtils {
             customBitrates?: { [key: string]: string };
         }
     ): Resolution[] {
-        const minWidth = options?.minWidth || 240;
-        const minHeight = options?.minHeight || 144;
+        const minWidth = options?.minWidth || 160;
+        const minHeight = options?.minHeight || 90;
         const scaleFactors = options?.scaleFactors || this.SCALE_FACTORS;
         const customBitrates = options?.customBitrates || {};
 
@@ -193,7 +193,7 @@ export class ResolutionUtils {
                 scales = [0.875, 0.75, 0.625, 0.5, 0.375, 0.25];
                 break;
             case 'low':
-                scales = [0.67, 0.5, 0.33];
+                scales = [0.67, 0.5, 0.33, 0.25];
                 break;
             case 'medium':
             default:
@@ -233,7 +233,7 @@ export class ResolutionUtils {
     static isValidResolution(width: number, height: number): boolean {
         if (width <= 0 || height <= 0) return false;
         if (width % 2 !== 0 || height % 2 !== 0) return false;
-        if (width < 160 || height < 120) return false;
+        if (width < 160 || height < 90) return false;
         return true;
     }
 

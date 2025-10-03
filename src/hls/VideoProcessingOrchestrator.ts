@@ -165,9 +165,9 @@ export class VideoProcessingOrchestrator extends EventEmitter {
     private playlistGenerator: HLSPlaylistGenerator;
     private subtitleProcessor: SubtitleProcessor;
 
-    constructor() {
+    constructor(dir?: string) {
         super();
-        this.ffmpegManager = new FFmpegManager();
+        this.ffmpegManager = new FFmpegManager(dir);
         
         const ffmpegPath = this.ffmpegManager.getFFmpegPath();
         const ffprobePath = this.ffmpegManager.getFFprobePath();
@@ -208,6 +208,18 @@ export class VideoProcessingOrchestrator extends EventEmitter {
             const outputDir = path.join(config.outputBaseDir, videoId);
             await this.setupDirectories(outputDir);
 
+            // ⭐ FASE 3.5: Procesar subtítulos UNA SOLA VEZ (ANTES de las variantes)
+            let subtitleResults: SubtitleResult[] = [];
+            if (config.extractSubtitles || plan.subtitles.length > 0) {
+                this.emitProgress('processing-subtitles', 15, 'Processing subtitles...');
+                subtitleResults = await this.processSubtitles(
+                    inputPath,
+                    outputDir,
+                    plan.subtitles,
+                    errors
+                );
+            }
+
             // FASE 4: Procesar variantes de video
             this.emitProgress('processing-video', 20, 'Processing video variants...');
             const variantResults = await this.processVideoVariants(
@@ -231,27 +243,21 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                 );
             }
 
-            // FASE 6: Procesar subtítulos
-            let subtitleResults: SubtitleResult[] = [];
-            if (config.extractSubtitles && plan.subtitles.length > 0) {
-                this.emitProgress('processing-subtitles', 85, 'Processing subtitles...');
-                subtitleResults = await this.processSubtitles(
-                    inputPath,
-                    outputDir,
+            // ⭐ FASE 6: Generar playlists de subtítulos (reutilizar archivos ya extraídos)
+            let hlsSubtitles: HLSSubtitle[] = [];
+            if (subtitleResults.length > 0) {
+                this.emitProgress('generating-playlists', 85, 'Generating subtitle playlists...');
+                const subtitleDir = path.join(outputDir, 'subtitles');
+                hlsSubtitles = await this.generateSubtitlePlaylists(
+                    subtitleResults,
                     plan.subtitles,
-                    errors
+                    subtitleDir,
+                    metadata.duration
                 );
             }
 
             // FASE 7: Generar master playlist
             this.emitProgress('generating-playlists', 90, 'Generating playlists...');
-            const subtitleDir = path.join(outputDir, 'subtitles');
-            const hlsSubtitles = await this.generateSubtitlePlaylists(
-                subtitleResults,
-                plan.subtitles,
-                subtitleDir,
-                metadata.duration
-            );
             const masterPlaylistPath = await this.generateMasterPlaylist(
                 outputDir,
                 plan.variants,
@@ -841,17 +847,21 @@ export class VideoProcessingOrchestrator extends EventEmitter {
             // Solo WebVTT es compatible nativamente con HLS
             if (result.format !== 'vtt' && result.format !== 'webvtt') {
                 this.emit('warning', `Subtitle ${result.language} is in format ${result.format} and may not be HLS compatible without conversion.`);
-                // Opcionalmente, podrías omitirlo o manejarlo de otra forma.
             }
-            
-            const vttFilename = path.basename(result.path);
-            const playlistFilename = `subtitles_${result.language}.m3u8`;
+            const vttFilename = `subtitle_${result.language}.vtt`;
+            const playlistFilename = `subtitle_${result.language}.m3u8`;
             const playlistPath = path.join(subtitleDir, playlistFilename);
 
-            // Usar el generador para crear el playlist del subtítulo
+            const originalVttPath = result.path;
+            const standardVttPath = path.join(subtitleDir, vttFilename);
+            
+            if (originalVttPath !== standardVttPath) {
+                await fs.copy(originalVttPath, standardVttPath);
+            }
+
             await this.playlistGenerator.writeSubtitlePlaylist(
                 playlistPath,
-                vttFilename, // Ruta relativa al playlist
+                vttFilename,
                 duration
             );
 
@@ -861,7 +871,7 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                 language: result.language,
                 isDefault: info.isDefault,
                 isForced: info.isForced,
-                playlistPath: `subtitles/${playlistFilename}`, // Ruta relativa al master playlist
+                playlistPath: `subtitles/${playlistFilename}`,
                 vttPath: `subtitles/${vttFilename}`,
                 groupId: 'subs'
             });

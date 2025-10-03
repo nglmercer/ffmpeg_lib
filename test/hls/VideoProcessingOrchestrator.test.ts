@@ -40,7 +40,7 @@ describe('VideoProcessingOrchestrator Tests', () => {
             height: 720
         });
         testVideoPath = video.path;
-    }, 120000); // 2 minute timeout for FFmpeg download and media generation
+    });
 
     afterAll(async () => {
         await mediaGenerator.cleanup();
