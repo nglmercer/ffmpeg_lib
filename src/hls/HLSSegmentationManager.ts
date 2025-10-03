@@ -130,7 +130,7 @@ export class HLSSegmentationManager extends EventEmitter {
         });
 
         cmd.input(inputPath);
-
+        cmd.outputOptions(['-sn']);
         // Aplicar opciones de tiempo
         if (options.startTime !== undefined) {
             cmd.seekInput(options.startTime);

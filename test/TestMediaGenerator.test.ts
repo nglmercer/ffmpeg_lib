@@ -239,7 +239,16 @@ describe('TestMediaGenerator Tests', () => {
       expect(duration).toBeLessThan(11);
     }, 30000);
   });
+  describe('mkv with audio and subtitles', () => {
+    test('should generate mkv with audio and subtitles', async () => {
+      const video = await generator.generateVideoWithSubtitles('test_mkv.mp4', {
+        duration: 10
+      });
 
+      const info = await generator.getMediaInfo(video.path);
+      
+    }, 30000);
+  })
   describe('Cleanup', () => {
     test('should cleanup generated files', async () => {
       await generator.generateTestVideo('cleanup_test.mp4', { duration: 2 });

@@ -381,6 +381,92 @@ class TestMediaGenerator {
     const binaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
     return path.join(dir, binaryName);
   }
+  /**
+   * Genera un video con subtítulos integrados (soft subs).
+   * @param filename - El nombre del archivo de salida. DEBE tener la extensión .mkv
+   * @param options - Opciones de video, audio y subtítulos.
+   */
+  async generateVideoWithSubtitles(
+    filename: string,
+    options: VideoOptions & AudioOptions & { subtitleText?: string[] } = {}
+  ): Promise<MediaFile> {
+    await fs.ensureDir(this.outputDir);
+    
+    // 1. Generate the base video with audio
+    const tempVideoFilename = `temp_video_audio_${Date.now()}.mp4`;
+    const videoWithAudio = await this.generateVideoWithAudio(tempVideoFilename, options);
+
+    // 2. Create a temporary subtitle file (SRT format)
+    const srtFilename = `temp_subs_${Date.now()}.srt`;
+    const srtPath = path.join(this.outputDir, srtFilename);
+    const duration = options.duration || 10;
+    const subtitles = options.subtitleText || [
+      'This is the first subtitle',
+      'Appears in the middle',
+      'And this is the last one'
+    ];
+    
+    let srtContent = '';
+    const partDuration = duration / subtitles.length;
+
+    const toSrtTime = (seconds: number) => {
+      const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+      const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+      const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+      const ms = (Math.round((seconds - Math.floor(seconds)) * 1000)).toString().padStart(3, '0');
+      return `${h}:${m}:${s},${ms}`;
+    };
+
+    subtitles.forEach((text, i) => {
+      const startTime = i * partDuration;
+      const endTime = startTime + partDuration * 0.8; // Show for 80% of the duration part
+      srtContent += `${i + 1}\n`;
+      srtContent += `${toSrtTime(startTime)} --> ${toSrtTime(endTime)}\n`;
+      srtContent += `${text}\n\n`;
+    });
+
+    await fs.writeFile(srtPath, srtContent);
+
+    // 3. Mux (multiplex) video, audio, and subtitles into an MKV container.
+    //    El nombre del archivo debe ser .mkv para que esto funcione correctamente.
+    const outputPath = path.join(this.outputDir, filename);
+    const cmd = new FFmpegCommand({ ffmpegPath: this.ffmpegPath, ffprobePath: this.ffprobePath });
+    cmd
+      .input(videoWithAudio.path)
+      .input(srtPath)
+      // Usar 'stream copy' para velocidad, ya que no se necesita re-codificación.
+      // FFmpeg copiará los streams de video, audio y subtítulos al contenedor MKV.
+      .outputOptions([
+        '-c', 'copy', // Copia todos los codecs (video, audio, subtítulos)
+        '-map', '0',    // Mapea todos los streams del primer input (video+audio)
+        '-map', '1',    // Mapea todos los streams del segundo input (subtítulos)
+      ])
+      .output(outputPath);
+
+    try {
+      await cmd.run();
+      const stats = await fs.stat(outputPath);
+      
+      // Limpiar archivos temporales
+      await fs.remove(videoWithAudio.path);
+      await fs.remove(srtPath);
+
+      return {
+        path: outputPath,
+        size: stats.size,
+        type: 'video',
+        metadata: {
+          ...videoWithAudio.metadata,
+          hasSubtitles: true
+        }
+      };
+    } catch (error) {
+      // Limpiar en caso de error también
+      await fs.remove(videoWithAudio.path).catch(() => {});
+      await fs.remove(srtPath).catch(() => {});
+      throw new Error(`Failed to generate video with subtitles: ${(error as Error).message}`);
+    }
+  }
 }
 
 export { TestMediaGenerator, MediaFile, VideoOptions, AudioOptions, ImageOptions };

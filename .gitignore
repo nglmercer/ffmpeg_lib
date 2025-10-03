@@ -132,13 +132,16 @@ dist
 # Bun
 bun.lockb
 
+# assets
 binaries/*
 *.mp3
 *.mp4
+*.mkv
 *.png
 *.jpg
 *.aac
 generated-media/*
 *.m3u8
 hls-output/*
+test-output/*
 custom-output/*
