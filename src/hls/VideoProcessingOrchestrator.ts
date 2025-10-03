@@ -12,7 +12,7 @@ import {
     HLSSubtitle 
 } from './HLSPlaylistGenerator';
 import { FFmpegManager } from '../FFmpegManager';
-
+import { SubtitleProcessor,createDefaultSubtitleConfig } from './SubtitleProcessor.js';
 // ==================== INTERFACES ====================
 
 /**
@@ -163,6 +163,7 @@ export class VideoProcessingOrchestrator extends EventEmitter {
     private metadataExtractor: MediaMetadataExtractor;
     private segmentationManager: HLSSegmentationManager;
     private playlistGenerator: HLSPlaylistGenerator;
+    private subtitleProcessor: SubtitleProcessor;
 
     constructor() {
         super();
@@ -174,6 +175,7 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         this.metadataExtractor = new MediaMetadataExtractor(ffprobePath);
         this.segmentationManager = new HLSSegmentationManager(ffmpegPath, ffprobePath);
         this.playlistGenerator = new HLSPlaylistGenerator();
+        this.subtitleProcessor = new SubtitleProcessor(ffmpegPath, ffprobePath);
     }
 
     // ==================== PROCESAMIENTO PRINCIPAL ====================
@@ -243,11 +245,18 @@ export class VideoProcessingOrchestrator extends EventEmitter {
 
             // FASE 7: Generar master playlist
             this.emitProgress('generating-playlists', 90, 'Generating playlists...');
+            const subtitleDir = path.join(outputDir, 'subtitles');
+            const hlsSubtitles = await this.generateSubtitlePlaylists(
+                subtitleResults,
+                plan.subtitles,
+                subtitleDir,
+                metadata.duration
+            );
             const masterPlaylistPath = await this.generateMasterPlaylist(
                 outputDir,
                 plan.variants,
                 audioResults.length > 0 ? this.convertToHLSAudioTracks(audioResults, plan.audioTracks) : undefined,
-                subtitleResults.length > 0 ? this.convertToHLSSubtitles(subtitleResults, plan.subtitles) : undefined
+                hlsSubtitles.length > 0 ? hlsSubtitles : undefined
             );
 
             // FASE 8: Cleanup
@@ -602,8 +611,53 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         subtitles: SubtitleInfo[],
         errors: ProcessingError[]
     ): Promise<SubtitleResult[]> {
-        // TODO: Implementar cuando SubtitleProcessor esté disponible
-        return [];
+        
+        const subtitleDir = path.join(outputDir, 'subtitles');
+        await fs.ensureDir(subtitleDir);
+
+        // Usar la configuración por defecto que creaste
+        const subtitleConfig = createDefaultSubtitleConfig(subtitleDir);
+        // NOTA: Habilita la conversión a WebVTT si la implementas
+        subtitleConfig.generateWebVTT = true; 
+
+        try {
+            this.emit('subtitles-start', 'Extracting embedded subtitles...');
+
+            const processedSubs = await this.subtitleProcessor.extractEmbeddedSubtitles(
+                inputPath,
+                subtitleConfig,
+                { extractAll: true } // Extraer todos los idiomas detectados
+            );
+
+            this.emit('subtitles-complete', processedSubs.length);
+
+            // Mapear el resultado de SubtitleProcessor al formato que espera el Orquestador
+            const results: SubtitleResult[] = processedSubs.map(sub => {
+                
+                // HLS necesita un playlist que apunte al archivo VTT
+                // Si tienes un VTT, usa su playlist. Si no, usa la ruta del formato original.
+                const finalPath = sub.webvttPath || sub.customPath!;
+                const finalFormat = sub.webvttPath ? 'vtt' : sub.customFormat!.toString();
+
+                return {
+                    language: sub.language,
+                    format: finalFormat,
+                    path: finalPath, // La ruta del archivo .vtt o .srt/.ass
+                    // El playlist HLS de subtítulos se genera después
+                };
+            });
+
+            return results;
+
+        } catch (error: any) {
+            errors.push({
+                stage: 'subtitle-processing',
+                error: error.message,
+                timestamp: new Date()
+            });
+            this.emit('error', 'Subtitle processing failed', error);
+            return []; // Retorna vacío en caso de error
+        }
     }
 
     // ==================== GENERACIÓN DE PLAYLISTS ====================
@@ -772,7 +826,49 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         
         return languages[code] || code.toUpperCase();
     }
+    private async generateSubtitlePlaylists(
+        results: SubtitleResult[],
+        subtitleInfo: SubtitleInfo[],
+        subtitleDir: string,
+        duration: number
+    ): Promise<HLSSubtitle[]> {
+        const hlsSubtitles: HLSSubtitle[] = [];
 
+        for (const result of results) {
+            const info = subtitleInfo.find(s => s.language === result.language);
+            if (!info) continue;
+
+            // Solo WebVTT es compatible nativamente con HLS
+            if (result.format !== 'vtt' && result.format !== 'webvtt') {
+                this.emit('warning', `Subtitle ${result.language} is in format ${result.format} and may not be HLS compatible without conversion.`);
+                // Opcionalmente, podrías omitirlo o manejarlo de otra forma.
+            }
+            
+            const vttFilename = path.basename(result.path);
+            const playlistFilename = `subtitles_${result.language}.m3u8`;
+            const playlistPath = path.join(subtitleDir, playlistFilename);
+
+            // Usar el generador para crear el playlist del subtítulo
+            await this.playlistGenerator.writeSubtitlePlaylist(
+                playlistPath,
+                vttFilename, // Ruta relativa al playlist
+                duration
+            );
+
+            hlsSubtitles.push({
+                id: `sub_${result.language}`,
+                name: info.name,
+                language: result.language,
+                isDefault: info.isDefault,
+                isForced: info.isForced,
+                playlistPath: `subtitles/${playlistFilename}`, // Ruta relativa al master playlist
+                vttPath: `subtitles/${vttFilename}`,
+                groupId: 'subs'
+            });
+        }
+        
+        return hlsSubtitles;
+    }
     /**
      * Emite progreso
      */

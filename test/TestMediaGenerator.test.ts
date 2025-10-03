@@ -13,7 +13,10 @@ describe('TestMediaGenerator Tests', () => {
   beforeAll(async () => {
     // Configurar FFmpeg
     const manager = new FFmpegManager();
-    await manager.downloadFFmpegBinaries();
+    const isAvailable = await manager.isFFmpegAvailable();
+    if (!isAvailable){
+      await manager.downloadFFmpegBinaries();
+    }
     const { ffmpegPath: ffmpeg } = await manager.verifyBinaries();
     ffmpegPath = ffmpeg;
 
@@ -22,7 +25,7 @@ describe('TestMediaGenerator Tests', () => {
     await fs.ensureDir(testOutputDir);
 
     generator = new TestMediaGenerator(ffmpegPath, testOutputDir);
-  }, 120000);
+  });
 
   afterAll(async () => {
     await generator.cleanup();

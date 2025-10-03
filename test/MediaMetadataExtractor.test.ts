@@ -22,7 +22,10 @@ describe('MediaMetadataExtractor Tests', () => {
   beforeAll(async () => {
     // Setup FFmpeg binaries
     const manager = new FFmpegManager();
-    await manager.downloadFFmpegBinaries();
+    const isAvailable = await manager.isFFmpegAvailable();
+    if (!isAvailable){
+      await manager.downloadFFmpegBinaries();
+    }
     const binaries = await manager.verifyBinaries();
     ffmpegPath = binaries.ffmpegPath;
     ffprobePath = binaries.ffprobePath;
@@ -36,7 +39,7 @@ describe('MediaMetadataExtractor Tests', () => {
 
     // Initialize test media generator
     testMediaGenerator = new TestMediaGenerator(ffmpegPath, testOutputDir);
-  }, 120000);
+  });
 
   afterAll(async () => {
     // Cleanup test files
@@ -496,7 +499,10 @@ describe('MediaMetadataExtractor Tests', () => {
   describe('MediaMetadataExtractor - Integration with FFmpegManager', () => {
     test('should work seamlessly with FFmpegManager', async () => {
       const manager = new FFmpegManager();
-      await manager.downloadFFmpegBinaries();
+      const isAvailable = await manager.isFFmpegAvailable();
+      if (!isAvailable){
+        await manager.downloadFFmpegBinaries(true);
+      }    
 
       const video = await testMediaGenerator.generateTestVideo('integration.mp4', {
         duration: 3,
@@ -513,7 +519,10 @@ describe('MediaMetadataExtractor Tests', () => {
 
     test('should use cached extractor instance', async () => {
       const manager = new FFmpegManager();
-      await manager.downloadFFmpegBinaries();
+      const isAvailable = await manager.isFFmpegAvailable();
+      if (!isAvailable){
+        await manager.downloadFFmpegBinaries(true);
+      }   
 
       const extractor1 = manager.getMetadataExtractor();
       const extractor2 = manager.getMetadataExtractor();

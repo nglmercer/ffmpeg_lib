@@ -1,6 +1,6 @@
 {
   "name": "ffmpeg-lib",
-  "version": "1.0.2",
+  "version": "1.0.5",
   "description": "FFmpeg-based library for video processing",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -40,7 +40,7 @@
   "license": "MIT",
   "dependencies": {
     "adm-zip": "^0.5.16",
-    "ffmpeg-lib": "^1.0.1",
+    "ffmpeg-lib": "^1.0.5",
     "fs-extra": "^11.1.0"
   },
   "devDependencies": {

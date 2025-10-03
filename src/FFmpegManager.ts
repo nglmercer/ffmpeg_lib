@@ -29,7 +29,13 @@ interface CacheManifest {
     ffmpegPath: string;
     ffprobePath: string;
 }
-
+const logger = {
+    info: (...args: unknown[]) => console.info(`[FFmpegManager]`,...args),
+    error: (...args: unknown[]) => console.error(`[FFmpegManager]`,...args),
+    warn: (...args: unknown[]) => console.warn(`[FFmpegManager]`,...args),
+    debug: (...args: unknown[]) => console.debug(`[FFmpegManager]`,...args),
+    log: (...args: unknown[]) => {return;console.log(`[FFmpegManager]`,...args)}
+}
 class FFmpegManager {
     public binariesDir: string;
     public platform: string;
@@ -79,7 +85,7 @@ class FFmpegManager {
             const daysSinceDownload = (Date.now() - downloadDate.getTime()) / (1000 * 60 * 60 * 24);
             
             if (daysSinceDownload > 30) {
-                console.log('⏰ Binaries are older than 30 days, update recommended');
+                logger.log('⏰ Binaries are older than 30 days, update recommended');
                 return true;
             }
 
@@ -128,18 +134,18 @@ class FFmpegManager {
      * Descarga FFmpeg con manejo de caché y verificación
      */
     async downloadFFmpegBinaries(force: boolean = false): Promise<void> {
-        console.log('🔍 Checking FFmpeg binaries...');
+        logger.log('🔍 Checking FFmpeg binaries...');
         
         // Verificar si necesita actualización
         if (!force) {
             const needsUpdate = await this.checkForUpdates();
             if (!needsUpdate) {
-                console.log('✅ FFmpeg binaries are up to date');
+                logger.log('✅ FFmpeg binaries are up to date');
                 return;
             }
         }
 
-        console.log('📥 Downloading FFmpeg binaries...');
+        logger.log('📥 Downloading FFmpeg binaries...');
         
         await fs.ensureDir(this.binariesDir);
         
@@ -166,16 +172,16 @@ class FFmpegManager {
             const buffer = Buffer.from(arrayBuffer);
             await fs.writeFile(filePath, buffer);
 
-            console.log('✅ Download completed');
+            logger.log('✅ Download completed');
             
             // Calculate checksum
             const checksum = await this.calculateChecksum(filePath);
-            console.log('🔐 Checksum:', checksum);
+            logger.log('🔐 Checksum:', checksum);
 
-            console.log('📦 Extracting binaries...');
+            logger.log('📦 Extracting binaries...');
             await this.extractBinaries(filePath, tempDir);
             
-            console.log('📋 Installing binaries...');
+            logger.log('📋 Installing binaries...');
             await this.copyBinaries(tempDir);
             
             // Verify installation
@@ -194,8 +200,8 @@ class FFmpegManager {
                 ffprobePath
             });
             
-            console.log('✅ FFmpeg binaries installed successfully!');
-            console.log(`📌 Version: ${version}`);
+            logger.log('✅ FFmpeg binaries installed successfully!');
+            logger.log(`📌 Version: ${version}`);
         } finally {
             await fs.remove(tempDir);
         }
@@ -260,7 +266,7 @@ class FFmpegManager {
                 await fs.chmod(destPath, 0o755);
             }
             
-            console.log(`✓ Installed: ${filename}`);
+            logger.log(`✓ Installed: ${filename}`);
         }
     }
 
@@ -376,7 +382,7 @@ class FFmpegManager {
         for (const file of files) {
             if (await fs.pathExists(file)) {
                 await fs.remove(file);
-                console.log(`🗑️  Removed: ${path.basename(file)}`);
+                logger.log(`🗑️  Removed: ${path.basename(file)}`);
             }
         }
     }

@@ -15,7 +15,10 @@ describe3('SubtitleProcessor Tests', () => {
 
     beforeAll3(async () => {
         const ffmpegManager = new FFmpegManager();
-        await ffmpegManager.downloadFFmpegBinaries();
+        const isAvailable = await ffmpegManager.isFFmpegAvailable();
+        if (!isAvailable){
+            await ffmpegManager.downloadFFmpegBinaries(true);
+        }  
         const binaries = await ffmpegManager.verifyBinaries();
         ffmpegPath = binaries.ffmpegPath;
         ffprobePath = binaries.ffprobePath;

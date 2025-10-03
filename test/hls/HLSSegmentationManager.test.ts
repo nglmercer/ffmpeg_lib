@@ -1,6 +1,6 @@
 // ==================== test/HLSSegmentationManager.test.ts ====================
 
-import { describe as describe2, test as test2, expect as expect2, beforeAll as beforeAll2, afterAll as afterAll2 } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { HLSSegmentationManager } from '../../src/hls/HLSSegmentationManager';
 import { TestMediaGenerator } from '../../src/TestMediaGenerator';
 import { FFmpegManager } from '../../src/FFmpegManager';
@@ -9,7 +9,7 @@ import fs2 from 'fs-extra';
 import path2 from 'path';
 import os2 from 'os';
 
-describe2('HLSSegmentationManager Tests', () => {
+describe('HLSSegmentationManager Tests', () => {
     let manager: HLSSegmentationManager;
     let mediaGenerator: TestMediaGenerator;
     let testDir: string;
@@ -17,9 +17,12 @@ describe2('HLSSegmentationManager Tests', () => {
     let ffmpegPath: string;
     let ffprobePath: string;
 
-    beforeAll2(async () => {
+    beforeAll(async () => {
         const ffmpegManager = new FFmpegManager();
-        await ffmpegManager.downloadFFmpegBinaries();
+        const isAvailable = await ffmpegManager.isFFmpegAvailable();
+        if (!isAvailable){
+            await ffmpegManager.downloadFFmpegBinaries(true);
+        }   
         const binaries = await ffmpegManager.verifyBinaries();
         ffmpegPath = binaries.ffmpegPath;
         ffprobePath = binaries.ffprobePath;
@@ -37,15 +40,15 @@ describe2('HLSSegmentationManager Tests', () => {
             height: 720
         });
         testVideoPath = video.path;
-    }, 120000);
+    });
 
-    afterAll2(async () => {
+    afterAll(async () => {
         await mediaGenerator.cleanup();
         await fs2.remove(testDir);
     });
 
-    describe2('Video Segmentation', () => {
-        test2('should segment video to HLS', async () => {
+    describe('Video Segmentation', () => {
+        test('should segment video to HLS', async () => {
             const outputDir = path2.join(testDir, 'segments-1');
             const config = {
                 segmentDuration: 6,
@@ -64,12 +67,12 @@ describe2('HLSSegmentationManager Tests', () => {
                 resolution
             });
 
-            expect2(result.segmentCount).toBeGreaterThan(0);
-            expect2(result.segments.length).toBeGreaterThan(0);
-            expect2(await fs2.pathExists(result.playlistPath)).toBe(true);
+            expect(result.segmentCount).toBeGreaterThan(0);
+            expect(result.segments.length).toBeGreaterThan(0);
+            expect(await fs2.pathExists(result.playlistPath)).toBe(true);
         }, 60000);
 
-        test2('should create segments with correct duration', async () => {
+        test('should create segments with correct duration', async () => {
             const outputDir = path2.join(testDir, 'segments-2');
             const config = {
                 segmentDuration: 4,
@@ -88,14 +91,14 @@ describe2('HLSSegmentationManager Tests', () => {
 
             // Verificar que los segmentos tengan duración cercana a 4 segundos
             for (const segment of result.segments) {
-                expect2(segment.duration).toBeGreaterThan(3);
-                expect2(segment.duration).toBeLessThan(5);
+                expect(segment.duration).toBeGreaterThan(3);
+                expect(segment.duration).toBeLessThan(5);
             }
         }, 60000);
     });
 
-    describe2('Progress Events', () => {
-        test2('should emit progress events', async () => {
+    describe('Progress Events', () => {
+        test('should emit progress events', async () => {
             const outputDir = path2.join(testDir, 'segments-progress');
             const config = {
                 segmentDuration: 6,
@@ -117,28 +120,28 @@ describe2('HLSSegmentationManager Tests', () => {
                 resolution
             });
 
-            expect2(progressCount).toBeGreaterThan(0);
+            expect(progressCount).toBeGreaterThan(0);
         }, 60000);
     });
 
-    describe2('Configuration Helpers', () => {
-        test2('should create video config for different qualities', () => {
+    describe('Configuration Helpers', () => {
+        test('should create video config for different qualities', () => {
             const resolution = { width: 1920, height: 1080, name: '1080p', bitrate: '5000k' };
             const config = HLSSegmentationManager.createVideoConfig(resolution, 'fast');
 
-            expect2(config.codec).toBe('libx264');
-            expect2(config.preset).toBe('fast');
-            expect2(config.profile).toBe('high');
-            expect2(config.bitrate).toBe('5000k');
+            expect(config.codec).toBe('libx264');
+            expect(config.preset).toBe('fast');
+            expect(config.profile).toBe('high');
+            expect(config.bitrate).toBe('5000k');
         });
 
-        test2('should create audio config for different qualities', () => {
+        test('should create audio config for different qualities', () => {
             const low = HLSSegmentationManager.createAudioConfig('low');
             const high = HLSSegmentationManager.createAudioConfig('high');
 
-            expect2(low.bitrate).toBe('64k');
-            expect2(high.bitrate).toBe('192k');
-            expect2(high.sampleRate).toBe(48000);
+            expect(low.bitrate).toBe('64k');
+            expect(high.bitrate).toBe('192k');
+            expect(high.sampleRate).toBe(48000);
         });
     });
 });

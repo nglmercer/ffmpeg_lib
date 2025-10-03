@@ -21,14 +21,11 @@ async function main(): Promise<void> {
             
             const info = await manager.getInstallationInfo();
             if (info) {
-                console.log(`📌 Versión: ${info.version}`);
-                console.log(`📌 Plataforma: ${info.platform}`);
-                console.log(`📌 Fecha de instalación: ${new Date(info.downloadDate).toLocaleDateString()}`);
+                console.log(`📌 Versión: ${info.version}`,info);
             }
             
             const needsUpdate = await manager.checkForUpdates();
             if (needsUpdate) {
-                console.log('\n⚠️  Se recomienda actualizar los binarios (más de 30 días)');
                 console.log('Ejecuta: npm run update-ffmpeg');
             }
             
@@ -53,8 +50,6 @@ async function main(): Promise<void> {
             console.log(`📌 Versión: ${info.version}`);
             console.log(`📌 Checksum: ${info.checksum}`);
         }
-        
-        console.log('\n🎉 ¡FFmpeg está listo para usar!');
         
     } catch (error) {
         console.error('❌ Error durante la instalación:', (error as Error).message);

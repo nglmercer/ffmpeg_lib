@@ -16,7 +16,10 @@ describe('FFmpegCommand Tests', () => {
   beforeAll(async () => {
     // Setup FFmpeg binaries and test environment
     const manager = new FFmpegManager();
-    await manager.downloadFFmpegBinaries();
+    const isAvailable = await manager.isFFmpegAvailable();
+    if (!isAvailable){
+      await manager.downloadFFmpegBinaries();
+    }
     const binaries = await manager.verifyBinaries();
     ffmpegPath = binaries.ffmpegPath;
     ffprobePath = binaries.ffprobePath;
@@ -27,7 +30,7 @@ describe('FFmpegCommand Tests', () => {
 
     // Initialize test media generator
     testMediaGenerator = new TestMediaGenerator(ffmpegPath, testOutputDir);
-  }, 120000);
+  });
 
   afterAll(async () => {
     // Cleanup test files
@@ -397,7 +400,7 @@ describe('FFmpegCommand Tests', () => {
 
       expect(result).toBeUndefined(); // run() resolves to void
       expect(await fs.pathExists(outputFile)).toBe(true);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should execute video conversion with options', async () => {
       const inputFile = await testMediaGenerator.generateTestVideo('input_opts.mp4', {
@@ -420,7 +423,7 @@ describe('FFmpegCommand Tests', () => {
         .run();
 
       expect(await fs.pathExists(outputFile)).toBe(true);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should execute conversion with movflags faststart', async () => {
       const inputFile = await testMediaGenerator.generateTestVideo('input_faststart.mp4', {
@@ -439,7 +442,7 @@ describe('FFmpegCommand Tests', () => {
         .run();
 
       expect(await fs.pathExists(outputFile)).toBe(true);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should execute audio extraction', async () => {
       const videoWithAudio = await testMediaGenerator.generateVideoWithAudio('input_audio.mp4', {
@@ -457,7 +460,7 @@ describe('FFmpegCommand Tests', () => {
         .run();
 
       expect(await fs.pathExists(outputAudio)).toBe(true);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should execute video with filters', async () => {
       const inputFile = await testMediaGenerator.generateTestVideo('input_filters.mp4', {
@@ -475,7 +478,7 @@ describe('FFmpegCommand Tests', () => {
         .run();
 
       expect(await fs.pathExists(outputFile)).toBe(true);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should emit progress events during execution', async () => {
       const inputFile = await testMediaGenerator.generateTestVideo('input_progress.mp4', {
@@ -500,7 +503,7 @@ describe('FFmpegCommand Tests', () => {
       expect(progressEvents[0]).toHaveProperty('frames');
       expect(progressEvents[0]).toHaveProperty('currentFps');
       expect(progressEvents[0]).toHaveProperty('timemark');
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should emit start and end events', async () => {
       const inputFile = await testMediaGenerator.generateTestVideo('input_events.mp4', {
@@ -529,7 +532,7 @@ describe('FFmpegCommand Tests', () => {
 
       expect(startEventFired).toBe(true);
       expect(endEventFired).toBe(true);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should handle timeout', async () => {
       const timeoutCommand = new FFmpegCommand({ ffmpegPath, ffprobePath, timeout: 100 });
@@ -547,7 +550,7 @@ describe('FFmpegCommand Tests', () => {
           .output(outputFile)
           .run()
       ).rejects.toThrow('FFmpeg process timeout');
-    }, 30000);
+    }, { timeout: 30000 });
   });
 
   describe('FFmpegCommand - Static Probe Method', () => {
@@ -576,9 +579,8 @@ describe('FFmpegCommand Tests', () => {
       // Check format information
       expect(probeData.format.duration).toBeDefined();
       expect(Number(probeData.format?.duration)).toBeGreaterThan(2);
-
       expect(Number(probeData.format?.duration)).toBeLessThan(4);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should probe audio file and return metadata', async () => {
       const testAudio = await testMediaGenerator.generateTestAudio('probe_audio.mp3', {
@@ -597,7 +599,7 @@ describe('FFmpegCommand Tests', () => {
       const audioStream = probeData.streams.find(s => s.codec_type === 'audio');
       expect(audioStream).toBeDefined();
       expect(audioStream?.channels).toBe(2);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should throw error for non-existent file', async () => {
       await expect(
@@ -632,7 +634,7 @@ describe('FFmpegCommand Tests', () => {
       for (const screenshot of screenshots) {
         expect(await fs.pathExists(screenshot)).toBe(true);
       }
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should generate specified number of screenshots', async () => {
       const inputVideo = await testMediaGenerator.generateTestVideo('screenshot_test.mp4', {
@@ -641,7 +643,6 @@ describe('FFmpegCommand Tests', () => {
         height: 480
       });
 
-      // Create a command instance for screenshots using timestamps
       const command = new FFmpegCommand({ ffmpegPath, ffprobePath });
       command.input(inputVideo.path);
       const screenshots = await command.screenshots({
@@ -654,11 +655,10 @@ describe('FFmpegCommand Tests', () => {
       expect(Array.isArray(screenshots)).toBe(true);
       expect(screenshots.length).toBe(2);
       
-      // Verify files exist
       for (const screenshot of screenshots) {
         expect(await fs.pathExists(screenshot)).toBe(true);
       }
-    }, 20000);
+    }, { timeout: 20000 });
 
     test('should generate screenshots with custom size', async () => {
       const inputVideo = await testMediaGenerator.generateTestVideo('screenshot_size.mp4', {
@@ -667,7 +667,6 @@ describe('FFmpegCommand Tests', () => {
         height: 720
       });
 
-      // Create a command instance for screenshots using timestamps
       const command = new FFmpegCommand({ ffmpegPath, ffprobePath });
       command.input(inputVideo.path);
       const screenshots = await command.screenshots({
@@ -680,11 +679,10 @@ describe('FFmpegCommand Tests', () => {
       expect(Array.isArray(screenshots)).toBe(true);
       expect(screenshots.length).toBe(3);
       
-      // Verify files exist
       for (const screenshot of screenshots) {
         expect(await fs.pathExists(screenshot)).toBe(true);
       }
-    }, 20000);
+    }, { timeout: 20000 });
 
     test('should generate screenshots with custom filename', async () => {
       const inputVideo = await testMediaGenerator.generateTestVideo('screenshot_custom.mp4', {
@@ -693,7 +691,6 @@ describe('FFmpegCommand Tests', () => {
         height: 600
       });
 
-      // Create a command instance for screenshots using timestamps
       const command = new FFmpegCommand({ ffmpegPath, ffprobePath });
       command.input(inputVideo.path);
       const screenshots = await command.screenshots({
@@ -706,11 +703,10 @@ describe('FFmpegCommand Tests', () => {
       expect(Array.isArray(screenshots)).toBe(true);
       expect(screenshots.length).toBe(2);
       
-      // Verify files exist
       for (const screenshot of screenshots) {
         expect(await fs.pathExists(screenshot)).toBe(true);
       }
-    }, 20000);
+    }, { timeout: 20000 });
 
     test('should throw error when neither timestamps nor count specified', async () => {
       const testVideo = await testMediaGenerator.generateTestVideo('screenshot_error.mp4', {
@@ -740,7 +736,7 @@ describe('FFmpegCommand Tests', () => {
       const cloned = original.clone();
       
       expect(cloned).toBeInstanceOf(FFmpegCommand);
-      expect(cloned).not.toBe(original); // Should be different instance
+      expect(cloned).not.toBe(original);
     });
 
     test('should kill process (method exists)', () => {
@@ -772,7 +768,6 @@ describe('FFmpegCommand Tests', () => {
 
       const outputFile = path.join(testOutputDir, 'complex_output.mp4');
 
-      // Note: This is a simplified test - real complex filtering would require proper setup
       await ffmpegCommand
         .input(video1.path)
         .input(video2.path)
@@ -781,7 +776,7 @@ describe('FFmpegCommand Tests', () => {
         .run();
 
       expect(await fs.pathExists(outputFile)).toBe(true);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should handle video scaling and format conversion', async () => {
       const inputVideo = await testMediaGenerator.generateTestVideo('scale_input.mp4', {
@@ -806,7 +801,7 @@ describe('FFmpegCommand Tests', () => {
         .run();
 
       expect(await fs.pathExists(outputFile)).toBe(true);
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should handle audio processing with multiple effects', async () => {
       const inputAudio = await testMediaGenerator.generateTestAudio('audio_input.mp3', {
@@ -829,7 +824,7 @@ describe('FFmpegCommand Tests', () => {
         .run();
 
       expect(await fs.pathExists(outputFile)).toBe(true);
-    }, 30000);
+    }, { timeout: 30000 });
   });
 
   describe('FFmpegCommand - Error Handling', () => {
@@ -840,7 +835,7 @@ describe('FFmpegCommand Tests', () => {
           .output(path.join(testOutputDir, 'error_output.mp4'))
           .run()
       ).rejects.toThrow();
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should handle corrupted input file', async () => {
       const corruptedFile = await testMediaGenerator.generateCorruptedVideo('corrupted_error.mp4');
@@ -851,7 +846,7 @@ describe('FFmpegCommand Tests', () => {
           .output(path.join(testOutputDir, 'corrupted_output.mp4'))
           .run()
       ).rejects.toThrow();
-    }, 30000);
+    }, { timeout: 30000 });
 
     test('should handle invalid codec', async () => {
       const inputFile = await testMediaGenerator.generateTestVideo('invalid_codec_input.mp4', {
@@ -867,6 +862,6 @@ describe('FFmpegCommand Tests', () => {
           .videoCodec('invalid_codec_xyz')
           .run()
       ).rejects.toThrow();
-    }, 30000);
+    }, { timeout: 30000 });
   });
 });

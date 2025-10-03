@@ -117,8 +117,10 @@ describe('FFmpeg Library Tests', () => {
 
     // Test de integración (puede tardar, considera skipear en CI)
     test('should download and install FFmpeg binaries', async () => {
-      await manager.downloadFFmpegBinaries(true);
-      
+      const isAvailable = await manager.isFFmpegAvailable();
+      if (!isAvailable){
+        await manager.downloadFFmpegBinaries(true);
+      }      
       const { ffmpegPath, ffprobePath } = await manager.verifyBinaries();
       
       expect(await fs.pathExists(ffmpegPath)).toBe(true);
@@ -126,7 +128,10 @@ describe('FFmpeg Library Tests', () => {
     }, 120000); // 2 minutos timeout
 
     test('should create manifest after successful installation', async () => {
-      await manager.downloadFFmpegBinaries(true);
+      const isAvailable = await manager.isFFmpegAvailable();
+      if (!isAvailable){
+        await manager.downloadFFmpegBinaries(true);
+      }    
       
       const info = await manager.getInstallationInfo();
       
@@ -196,7 +201,10 @@ describe('FFmpeg Library Tests', () => {
 
   describe('FFmpegManager Integration with FFmpegCommand', () => {
     test('should create FFmpegCommand with manager paths', async () => {
-      await manager.downloadFFmpegBinaries(true);
+      const isAvailable = await manager.isFFmpegAvailable();
+      if (!isAvailable){
+        await manager.downloadFFmpegBinaries(true);
+      }    
       const { ffmpegPath, ffprobePath } = await manager.verifyBinaries();
       
       const command = new FFmpegCommand({ ffmpegPath, ffprobePath });
@@ -204,7 +212,10 @@ describe('FFmpeg Library Tests', () => {
     }, 120000);
 
     test('should verify binaries work with FFmpegCommand', async () => {
-      await manager.downloadFFmpegBinaries(true);
+      const isAvailable = await manager.isFFmpegAvailable();
+      if (!isAvailable){
+        await manager.downloadFFmpegBinaries(true);
+      }    
       const { ffmpegPath, ffprobePath } = await manager.verifyBinaries();
       
       // Test that FFmpegCommand can be created and basic operations work
