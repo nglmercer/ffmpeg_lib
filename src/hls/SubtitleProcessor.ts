@@ -2,7 +2,7 @@ import { FFmpegCommand } from '../FFmpegCommand';
 import fs from 'fs-extra';
 import path from 'path';
 import { EventEmitter } from 'events';
-
+import { convert,detectFormatSimple } from 'subs-converter';
 // ==================== INTERFACES ====================
 
 /**
@@ -381,7 +381,7 @@ export class SubtitleProcessor extends EventEmitter {
         );
 
         // MOCK: Por ahora solo crear archivo placeholder
-        const mockContent = this.generateMockWebVTT(subtitle.language);
+        const mockContent = this.generateWebVTT(inputPath,subtitle.language);
         await fs.writeFile(webvttPath, mockContent, 'utf8');
 
         // MOCK: Crear playlist placeholder
@@ -398,19 +398,10 @@ export class SubtitleProcessor extends EventEmitter {
     /**
      * Genera contenido mock de WEBVTT
      */
-    private generateMockWebVTT(language: string): string {
-        return `WEBVTT
-
-NOTE This is a mock WEBVTT file.
-NOTE Real conversion requires external library implementation.
-NOTE Language: ${language}
-
-00:00:00.000 --> 00:00:05.000
-Mock subtitle - conversion not implemented yet
-
-00:00:05.000 --> 00:00:10.000
-Use custom player for original format
-`;
+    private generateWebVTT(inputPath: string,language: string): string {
+        const subData = fs.readFileSync(inputPath, 'utf8');
+        const format = detectFormatSimple(subData);
+        return convert(subData, format||SubtitleFormat.VTT, SubtitleFormat.VTT);
     }
 
     /**
