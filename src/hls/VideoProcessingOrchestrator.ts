@@ -1,4 +1,5 @@
-import { EventEmitter } from 'events';
+// VideoProcessingOrchestrator.ts - Con TypedVideoEventEmitter integrado
+
 import path from 'path';
 import fs from 'fs-extra';
 import { MediaMetadataExtractor, MediaMetadata, MediaType } from '../MediaMetadataExtractor';
@@ -12,163 +13,50 @@ import {
     HLSSubtitle 
 } from './HLSPlaylistGenerator';
 import { FFmpegManager } from '../FFmpegManager';
-import { SubtitleProcessor,createDefaultSubtitleConfig } from './SubtitleProcessor.js';
-// ==================== INTERFACES ====================
+import { SubtitleProcessor, createDefaultSubtitleConfig } from './SubtitleProcessor';
 
-/**
- * Configuración del procesamiento
- */
-export interface ProcessingConfig {
-    // Directorios
-    outputBaseDir: string;              // Directorio base de salida
-    tempDir?: string;                   // Directorio temporal
-    
-    // Calidad
-    qualityPreset?: 'low' | 'medium' | 'high';
-    targetResolutions?: string[];       // ["1080p", "720p", "480p"] o auto
-    minResolution?: { width: number; height: number };
-    
-    // Encoding
-    videoPreset?: 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium';
-    audioQuality?: 'low' | 'medium' | 'high';
-    
-    // HLS
-    segmentDuration?: number;           // Duración de segmentos (default: 6)
-    
-    // Procesamiento
-    parallel?: boolean;                 // Procesar calidades en paralelo
-    extractAudioTracks?: boolean;       // Extraer pistas de audio alternativas
-    extractSubtitles?: boolean;         // Extraer subtítulos embebidos
-    
-    // Limpieza
-    cleanupTemp?: boolean;              // Limpiar archivos temporales
-    keepOriginal?: boolean;             // Mantener video original
-}
+// ⭐ IMPORTAR SISTEMA DE EVENTOS TIPADOS
+import {
+    TypedVideoEventEmitter,
+    VideoProcessingEvent,
+    ProcessingPhase,
+    ProcessingProgressTracker,
+    EventLogger,
+    // Tipos de eventos
+    ProcessingStartedEvent,
+    ProcessingCompletedEvent,
+    VariantStartedEvent,
+    VariantProgressEvent,
+    VariantCompletedEvent
+} from './EventTypes';
+import type{
+    ProcessingConfig,
+    ProcessingPlan,
+    ProcessingResult,
+    ProcessingError,
+    VariantResult,
+    AudioTrackResult,
+    SubtitleResult,
+    SubtitleInfo,
+    AudioTrackInfo,
+} from './types'
 
-/**
- * Plan de procesamiento generado
- */
-export interface ProcessingPlan {
-    inputFile: string;
-    metadata: MediaMetadata;
-    targetResolutions: Resolution[];
-    variants: HLSVariant[];
-    audioTracks: AudioTrackInfo[];
-    subtitles: SubtitleInfo[];
-    estimatedDuration: number;          // Tiempo estimado en segundos
-    estimatedSize: number;              // Tamaño estimado en bytes
-}
 
-/**
- * Información de pista de audio
- */
-export interface AudioTrackInfo {
-    index: number;
-    language: string;
-    name: string;
-    codec: string;
-    channels: number;
-    isDefault: boolean;
-}
-
-/**
- * Información de subtítulo
- */
-export interface SubtitleInfo {
-    index: number;
-    language: string;
-    name: string;
-    codec: string;
-    isDefault: boolean;
-    isForced: boolean;
-}
-
-/**
- * Resultado del procesamiento
- */
-export interface ProcessingResult {
-    success: boolean;
-    videoId: string;
-    masterPlaylist: string;
-    variants: VariantResult[];
-    audioTracks: AudioTrackResult[];
-    subtitles: SubtitleResult[];
-    metadata: {
-        originalFile: string;
-        duration: number;
-        originalSize: number;
-        processedSize: number;
-        compressionRatio: number;
-        processingTime: number;
-    };
-    errors: ProcessingError[];
-}
-
-/**
- * Resultado de una variante
- */
-export interface VariantResult {
-    name: string;
-    resolution: string;
-    playlistPath: string;
-    segmentCount: number;
-    size: number;
-    bitrate: string;
-}
-
-/**
- * Resultado de audio
- */
-export interface AudioTrackResult {
-    language: string;
-    playlistPath: string;
-    size: number;
-}
-
-/**
- * Resultado de subtítulo
- */
-export interface SubtitleResult {
-    language: string;
-    format: string;
-    path: string;
-}
-
-/**
- * Error de procesamiento
- */
-export interface ProcessingError {
-    stage: string;
-    variant?: string;
-    error: string;
-    timestamp: Date;
-}
-
-/**
- * Progreso global
- */
-export interface ProcessingProgress {
-    stage: 'analyzing' | 'planning' | 'processing-video' | 'processing-audio' | 'processing-subtitles' | 'generating-playlists' | 'cleanup' | 'complete';
-    percent: number;
-    currentVariant?: string;
-    variantsCompleted: number;
-    variantsTotal: number;
-    message: string;
-}
-
-// ==================== CLASE PRINCIPAL ====================
-
-export class VideoProcessingOrchestrator extends EventEmitter {
+export class VideoProcessingOrchestrator extends TypedVideoEventEmitter {
     private ffmpegManager: FFmpegManager;
     private metadataExtractor: MediaMetadataExtractor;
     private segmentationManager: HLSSegmentationManager;
     private playlistGenerator: HLSPlaylistGenerator;
     private subtitleProcessor: SubtitleProcessor;
+    
+    // ⭐ Progress tracker integrado
+    private progressTracker?: ProcessingProgressTracker;
+    private eventLogger?: EventLogger;
 
-    constructor(dir?: string) {
+    constructor(dir?: string, options?: { enableLogger?: boolean }) {
         super();
-        this.ffmpegManager = new FFmpegManager(dir);
         
+        this.ffmpegManager = new FFmpegManager(dir);
         const ffmpegPath = this.ffmpegManager.getFFmpegPath();
         const ffprobePath = this.ffmpegManager.getFFprobePath();
         
@@ -176,12 +64,14 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         this.segmentationManager = new HLSSegmentationManager(ffmpegPath, ffprobePath);
         this.playlistGenerator = new HLSPlaylistGenerator();
         this.subtitleProcessor = new SubtitleProcessor(ffmpegPath, ffprobePath);
+        
+        // Habilitar logger opcional
+        if (options?.enableLogger) {
+            this.eventLogger = new EventLogger(this);
+        }
     }
-
-    // ==================== PROCESAMIENTO PRINCIPAL ====================
-
     /**
-     * Procesa un video completo para streaming HLS
+     * Procesa un video completo con eventos tipados
      */
     async processVideo(
         inputPath: string,
@@ -189,64 +79,97 @@ export class VideoProcessingOrchestrator extends EventEmitter {
     ): Promise<ProcessingResult> {
         const startTime = Date.now();
         const videoId = this.generateVideoId();
+        const processId = videoId;
         const errors: ProcessingError[] = [];
 
-        try {
-            // FASE 1: Análisis
-            this.emitProgress('analyzing', 0, 'Analyzing video...');
-            const metadata = await this.analyzeVideo(inputPath);
+        // Inicializar progress tracker
+        this.progressTracker = new ProcessingProgressTracker(processId);
 
+        try {
+            // ==================== FASE 1: ANÁLISIS ====================
+            this.emitPhaseStart(processId, ProcessingPhase.ANALYZING);
+            
+            const metadata = await this.analyzeVideo(inputPath);
+            
             if (metadata.mediaType !== MediaType.VIDEO) {
                 throw new Error('Input file is not a valid video');
             }
 
-            // FASE 2: Planificación
-            this.emitProgress('planning', 10, 'Planning processing...');
-            const plan = await this.createProcessingPlan(inputPath, metadata, config);
+            this.emit(VideoProcessingEvent.ANALYSIS_COMPLETED, {
+                processId,
+                timestamp: new Date(),
+                phase: ProcessingPhase.ANALYZING,
+                metadata
+            });
 
-            // FASE 3: Preparar estructura de directorios
+            // ==================== FASE 2: PLANIFICACIÓN ====================
+            this.emitPhaseStart(processId, ProcessingPhase.PLANNING);
+            
+            const plan = await this.createProcessingPlan(inputPath, metadata, config);
+            
+            this.emit(VideoProcessingEvent.PLANNING_COMPLETED, {
+                processId,
+                timestamp: new Date(),
+                phase: ProcessingPhase.PLANNING,
+                plan
+            });
+
+            // ==================== FASE 3: PREPARAR DIRECTORIOS ====================
             const outputDir = path.join(config.outputBaseDir, videoId);
             await this.setupDirectories(outputDir);
 
-            // ⭐ FASE 3.5: Procesar subtítulos UNA SOLA VEZ (ANTES de las variantes)
+            // ==================== FASE 4: PROCESAR SUBTÍTULOS ====================
             let subtitleResults: SubtitleResult[] = [];
             if (config.extractSubtitles || plan.subtitles.length > 0) {
-                this.emitProgress('processing-subtitles', 15, 'Processing subtitles...');
+                this.emitPhaseStart(processId, ProcessingPhase.PROCESSING_SUBTITLES);
+                
                 subtitleResults = await this.processSubtitles(
                     inputPath,
                     outputDir,
                     plan.subtitles,
+                    processId,
                     errors
                 );
+                
+                this.emitPhaseComplete(processId, ProcessingPhase.PROCESSING_SUBTITLES);
             }
 
-            // FASE 4: Procesar variantes de video
-            this.emitProgress('processing-video', 20, 'Processing video variants...');
+            // ==================== FASE 5: PROCESAR VARIANTES DE VIDEO ====================
+            this.emitPhaseStart(processId, ProcessingPhase.PROCESSING_VIDEO);
+            
             const variantResults = await this.processVideoVariants(
                 inputPath,
                 outputDir,
                 plan,
                 config,
+                processId,
                 errors
             );
+            
+            this.emitPhaseComplete(processId, ProcessingPhase.PROCESSING_VIDEO);
 
-            // FASE 5: Procesar audio (si hay múltiples pistas)
+            // ==================== FASE 6: PROCESAR AUDIO ====================
             let audioResults: AudioTrackResult[] = [];
             if (config.extractAudioTracks && plan.audioTracks.length > 1) {
-                this.emitProgress('processing-audio', 70, 'Processing audio tracks...');
+                this.emitPhaseStart(processId, ProcessingPhase.PROCESSING_AUDIO);
+                
                 audioResults = await this.processAudioTracks(
                     inputPath,
                     outputDir,
                     plan.audioTracks,
                     metadata.duration,
+                    processId,
                     errors
                 );
+                
+                this.emitPhaseComplete(processId, ProcessingPhase.PROCESSING_AUDIO);
             }
 
-            // ⭐ FASE 6: Generar playlists de subtítulos (reutilizar archivos ya extraídos)
+            // ==================== FASE 7: GENERAR PLAYLISTS ====================
+            this.emitPhaseStart(processId, ProcessingPhase.GENERATING_PLAYLISTS);
+            
             let hlsSubtitles: HLSSubtitle[] = [];
             if (subtitleResults.length > 0) {
-                this.emitProgress('generating-playlists', 85, 'Generating subtitle playlists...');
                 const subtitleDir = path.join(outputDir, 'subtitles');
                 hlsSubtitles = await this.generateSubtitlePlaylists(
                     subtitleResults,
@@ -256,26 +179,38 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                 );
             }
 
-            // FASE 7: Generar master playlist
-            this.emitProgress('generating-playlists', 90, 'Generating playlists...');
             const masterPlaylistPath = await this.generateMasterPlaylist(
                 outputDir,
                 plan.variants,
                 audioResults.length > 0 ? this.convertToHLSAudioTracks(audioResults, plan.audioTracks) : undefined,
                 hlsSubtitles.length > 0 ? hlsSubtitles : undefined
             );
+            
+            this.emitPhaseComplete(processId, ProcessingPhase.GENERATING_PLAYLISTS);
 
-            // FASE 8: Cleanup
+            // ==================== FASE 8: CLEANUP ====================
             if (config.cleanupTemp) {
-                this.emitProgress('cleanup', 95, 'Cleaning up...');
+                this.emitPhaseStart(processId, ProcessingPhase.CLEANUP);
                 await this.cleanup(config.tempDir);
+                this.emitPhaseComplete(processId, ProcessingPhase.CLEANUP);
             }
 
-            // FASE 9: Calcular estadísticas
+            // ==================== COMPLETADO ====================
             const processedSize = await this.calculateTotalSize(outputDir);
             const processingTime = (Date.now() - startTime) / 1000;
 
-            this.emitProgress('complete', 100, 'Processing complete!');
+            this.emit(VideoProcessingEvent.PROCESSING_COMPLETED, {
+                processId,
+                timestamp: new Date(),
+                phase: ProcessingPhase.COMPLETE,
+                videoId,
+                totalDuration: processingTime,
+                variantsProcessed: variantResults.length,
+                audioTracksProcessed: audioResults.length,
+                subtitlesProcessed: subtitleResults.length,
+                totalSize: processedSize,
+                masterPlaylistPath
+            } as ProcessingCompletedEvent);
 
             return {
                 success: errors.length === 0,
@@ -296,18 +231,65 @@ export class VideoProcessingOrchestrator extends EventEmitter {
             };
 
         } catch (error: any) {
-            errors.push({
+            this.emit(VideoProcessingEvent.PROCESSING_FAILED, {
+                processId,
+                timestamp: new Date(),
+                phase: this.progressTracker?.getStatus().phase || ProcessingPhase.ANALYZING,
                 stage: 'orchestration',
-                error: error.message,
-                timestamp: new Date()
+                error,
+                details: { videoId, inputPath }
             });
 
             throw error;
         }
     }
+    private emitPhaseStart(processId: string, phase: ProcessingPhase): void {
+        this.progressTracker?.updatePhase(phase, 0);
+        
+        this.emit(VideoProcessingEvent.PHASE_STARTED, {
+            processId,
+            timestamp: new Date(),
+            phase
+        });
+    }
 
-    // ==================== ANÁLISIS ====================
+    private emitPhaseComplete(processId: string, phase: ProcessingPhase): void {
+        this.progressTracker?.updatePhase(phase, 100);
+        
+        this.emit(VideoProcessingEvent.PHASE_COMPLETED, {
+            processId,
+            timestamp: new Date(),
+            phase
+        });
+    }
 
+    private emitVariantProgress(
+        processId: string,
+        variantName: string,
+        percent: number,
+        progressInfo?: any
+    ): void {
+        this.progressTracker?.updateVariant(variantName, percent);
+        
+        this.emit(VideoProcessingEvent.VARIANT_PROGRESS, {
+            processId,
+            timestamp: new Date(),
+            phase: ProcessingPhase.PROCESSING_VIDEO,
+            variantName,
+            percent,
+            fps: progressInfo?.currentFps,
+            speed: progressInfo?.speed,
+            bitrate: progressInfo?.bitrate,
+            timeProcessed: progressInfo?.timemark,
+            eta: progressInfo?.eta
+        } as VariantProgressEvent);
+    }
+        /**
+     * Obtiene el estado actual del progreso
+     */
+    getProgressStatus() {
+        return this.progressTracker?.getStatus();
+    }
     /**
      * Analiza el video de entrada
      */
@@ -315,15 +297,12 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         if (!await fs.pathExists(inputPath)) {
             throw new Error(`Input file not found: ${inputPath}`);
         }
-
         return await this.metadataExtractor.extractMetadata(inputPath);
     }
 
+
     // ==================== PLANIFICACIÓN ====================
 
-    /**
-     * Crea el plan de procesamiento
-     */
     private async createProcessingPlan(
         inputPath: string,
         metadata: MediaMetadata,
@@ -334,23 +313,16 @@ export class VideoProcessingOrchestrator extends EventEmitter {
             throw new Error('No video stream found');
         }
 
-        // Determinar resoluciones target
         const targetResolutions = this.determineTargetResolutions(
             primaryVideo.width,
             primaryVideo.height,
             config
         );
 
-        // Crear variantes HLS
         const variants = this.createHLSVariants(targetResolutions, config);
-
-        // Detectar pistas de audio
         const audioTracks = this.detectAudioTracks(metadata);
-
-        // Detectar subtítulos
         const subtitles = this.detectSubtitles(metadata);
 
-        // Estimar duración y tamaño
         const estimatedDuration = this.estimateProcessingDuration(
             metadata.duration,
             targetResolutions.length,
@@ -373,7 +345,6 @@ export class VideoProcessingOrchestrator extends EventEmitter {
             estimatedSize
         };
     }
-
     /**
      * Determina las resoluciones objetivo
      */
@@ -383,7 +354,6 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         config: ProcessingConfig
     ): Resolution[] {
         if (config.targetResolutions && config.targetResolutions.length > 0) {
-            // Usar resoluciones específicas
             const allResolutions = ResolutionUtils.generateLowerResolutions(
                 originalWidth,
                 originalHeight,
@@ -392,13 +362,10 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                     minHeight: config.minResolution?.height
                 }
             );
-
             return allResolutions.filter(r => 
                 config.targetResolutions!.includes(r.name)
             );
         }
-
-        // Generar resoluciones adaptativas
         return ResolutionUtils.generateAdaptiveResolutions(
             originalWidth,
             originalHeight,
@@ -413,10 +380,7 @@ export class VideoProcessingOrchestrator extends EventEmitter {
     /**
      * Crea variantes HLS
      */
-    private createHLSVariants(
-        resolutions: Resolution[],
-        config: ProcessingConfig
-    ): HLSVariant[] {
+    private createHLSVariants(resolutions: Resolution[], config: ProcessingConfig): HLSVariant[] {
         const builder = new HLSVariantBuilder();
         const audioQuality = config.audioQuality || 'medium';
         const audioBitrate = audioQuality === 'high' ? '192k' : audioQuality === 'low' ? '64k' : '128k';
@@ -434,8 +398,7 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                     subtitleGroup: 'subs'
                 }
             );
-        }
-
+        }   
         return builder.build();
     }
 
@@ -477,6 +440,7 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         outputDir: string,
         plan: ProcessingPlan,
         config: ProcessingConfig,
+        processId: string,
         errors: ProcessingError[]
     ): Promise<VariantResult[]> {
         const results: VariantResult[] = [];
@@ -484,7 +448,16 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         
         const processTasks = plan.targetResolutions.map(async (resolution, index) => {
             try {
-                this.emit('variant-start', resolution.name);
+                // Emitir evento de inicio de variante
+                this.emit(VideoProcessingEvent.VARIANT_STARTED, {
+                    processId,
+                    timestamp: new Date(),
+                    phase: ProcessingPhase.PROCESSING_VIDEO,
+                    variantName: resolution.name,
+                    resolution: `${resolution.width}x${resolution.height}`,
+                    index,
+                    total: plan.targetResolutions.length
+                } as VariantStartedEvent);
                 
                 const segmentationConfig = {
                     segmentDuration: config.segmentDuration || 6,
@@ -501,6 +474,28 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                 const audioConfig = HLSSegmentationManager.createAudioConfig(
                     config.audioQuality || 'medium'
                 );
+
+                // Suscribirse a progreso de segmentación
+               this.segmentationManager.on('progress', (progress) => {
+                    this.emitVariantProgress(processId, resolution.name, progress.percent, progress);
+                    
+                    // También emitir progreso de fase
+                    const baseProgress = 20; // PROCESSING_VIDEO comienza en 20%
+                    const variantWeight = 50 / plan.targetResolutions.length; // 50% para todas las variantes
+                    const phasePercent = baseProgress + (index * variantWeight) + ((progress.percent / 100) * variantWeight);
+                    
+                    this.emitPhaseProgress(
+                        processId,
+                        ProcessingPhase.PROCESSING_VIDEO,
+                        phasePercent,
+                        `Processing ${resolution.name}: ${progress.percent}%`,
+                        { 
+                            variant: resolution.name,
+                            variantIndex: index,
+                            totalVariants: plan.targetResolutions.length
+                        }
+                    );
+                });
 
                 const result = await this.segmentationManager.segmentVideo(
                     inputPath,
@@ -521,14 +516,18 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                     bitrate: resolution.bitrate
                 };
 
-                this.emit('variant-complete', resolution.name, variantResult);
-                
-                const progressPercent = 20 + ((index + 1) / plan.targetResolutions.length) * 50;
-                this.emitProgress(
-                    'processing-video',
-                    progressPercent,
-                    `Processed ${resolution.name} (${index + 1}/${plan.targetResolutions.length})`
-                );
+                // Emitir evento de completado
+                this.emit(VideoProcessingEvent.VARIANT_COMPLETED, {
+                    processId,
+                    timestamp: new Date(),
+                    phase: ProcessingPhase.PROCESSING_VIDEO,
+                    variantName: resolution.name,
+                    resolution: `${resolution.width}x${resolution.height}`,
+                    playlistPath: result.playlistPath,
+                    segmentCount: result.segmentCount,
+                    fileSize: result.fileSize,
+                    duration: result.duration
+                } as VariantCompletedEvent);
 
                 return variantResult;
 
@@ -564,6 +563,7 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         outputDir: string,
         audioTracks: AudioTrackInfo[],
         duration: number,
+        processId: string,
         errors: ProcessingError[]
     ): Promise<AudioTrackResult[]> {
         const results: AudioTrackResult[] = [];
@@ -592,7 +592,6 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                     playlistPath: result.playlistPath,
                     size: result.fileSize
                 });
-
             } catch (error: any) {
                 errors.push({
                     stage: 'audio-processing',
@@ -602,7 +601,6 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                 });
             }
         }
-
         return results;
     }
 
@@ -615,54 +613,38 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         inputPath: string,
         outputDir: string,
         subtitles: SubtitleInfo[],
+        processId: string,
         errors: ProcessingError[]
     ): Promise<SubtitleResult[]> {
-        
         const subtitleDir = path.join(outputDir, 'subtitles');
         await fs.ensureDir(subtitleDir);
 
-        // Usar la configuración por defecto que creaste
         const subtitleConfig = createDefaultSubtitleConfig(subtitleDir);
-        // NOTA: Habilita la conversión a WebVTT si la implementas
-        subtitleConfig.generateWebVTT = true; 
+        subtitleConfig.generateWebVTT = true;
 
         try {
-            this.emit('subtitles-start', 'Extracting embedded subtitles...');
-
             const processedSubs = await this.subtitleProcessor.extractEmbeddedSubtitles(
                 inputPath,
                 subtitleConfig,
-                { extractAll: true } // Extraer todos los idiomas detectados
+                { extractAll: true }
             );
 
-            this.emit('subtitles-complete', processedSubs.length);
-
-            // Mapear el resultado de SubtitleProcessor al formato que espera el Orquestador
-            const results: SubtitleResult[] = processedSubs.map(sub => {
-                
-                // HLS necesita un playlist que apunte al archivo VTT
-                // Si tienes un VTT, usa su playlist. Si no, usa la ruta del formato original.
+            return processedSubs.map(sub => {
                 const finalPath = sub.webvttPath || sub.customPath!;
                 const finalFormat = sub.webvttPath ? 'vtt' : sub.customFormat!.toString();
-
                 return {
                     language: sub.language,
                     format: finalFormat,
-                    path: finalPath, // La ruta del archivo .vtt o .srt/.ass
-                    // El playlist HLS de subtítulos se genera después
+                    path: finalPath
                 };
             });
-
-            return results;
-
         } catch (error: any) {
             errors.push({
                 stage: 'subtitle-processing',
                 error: error.message,
                 timestamp: new Date()
             });
-            this.emit('error', 'Subtitle processing failed', error);
-            return []; // Retorna vacío en caso de error
+            return [];
         }
     }
 
@@ -678,14 +660,12 @@ export class VideoProcessingOrchestrator extends EventEmitter {
         subtitles?: HLSSubtitle[]
     ): Promise<string> {
         const masterPath = path.join(outputDir, 'master.m3u8');
-
         await this.playlistGenerator.writeMasterPlaylist(
             masterPath,
             variants,
             audioTracks,
             subtitles
         );
-
         return masterPath;
     }
 
@@ -705,7 +685,7 @@ export class VideoProcessingOrchestrator extends EventEmitter {
      * Genera ID único para el video
      */
     private generateVideoId(): string {
-        return `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return `video_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     }
 
     /**
@@ -844,21 +824,18 @@ export class VideoProcessingOrchestrator extends EventEmitter {
             const info = subtitleInfo.find(s => s.language === result.language);
             if (!info) continue;
 
-            // UN SOLO archivo VTT por idioma
             const vttFilename = `subtitle_${result.language}.vtt`;
             const playlistFilename = `subtitle_${result.language}.m3u8`;
             const playlistPath = path.join(subtitleDir, playlistFilename);
 
-            // Copiar el VTT al directorio de subtítulos (si no está ya allí)
             const standardVttPath = path.join(subtitleDir, vttFilename);
             if (result.path !== standardVttPath) {
                 await fs.copy(result.path, standardVttPath);
             }
 
-            // Generar playlist que apunta al VTT completo
             await this.playlistGenerator.writeSubtitlePlaylist(
                 playlistPath,
-                vttFilename,  // Solo el nombre del archivo
+                vttFilename,
                 duration
             );
 
@@ -869,28 +846,29 @@ export class VideoProcessingOrchestrator extends EventEmitter {
                 isDefault: info.isDefault,
                 isForced: info.isForced,
                 playlistPath: `subtitles/${playlistFilename}`,
-                vttPath: `subtitles/${vttFilename}`,  // Ruta relativa
+                vttPath: `subtitles/${vttFilename}`,
                 groupId: 'subs'
             });
         }
-        
         return hlsSubtitles;
     }
-    /**
-     * Emite progreso
-     */
-    private emitProgress(
-        stage: ProcessingProgress['stage'],
+    private emitPhaseProgress(
+        processId: string,
+        phase: ProcessingPhase,
         percent: number,
-        message: string
+        message: string,
+        details?: Record<string, any>
     ): void {
-        this.emit('progress', {
-            stage,
-            percent: Math.min(100, Math.max(0, percent)),
+        this.progressTracker?.updatePhase(phase, percent);
+        
+        this.emit(VideoProcessingEvent.PHASE_PROGRESS, {
+            processId,
+            timestamp: new Date(),
+            phase,
+            percent,
             message,
-            variantsCompleted: 0,
-            variantsTotal: 0
-        } as ProcessingProgress);
+            details
+        });
     }
 }
 
