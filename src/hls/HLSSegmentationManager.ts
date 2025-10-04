@@ -1,96 +1,17 @@
 import { FFmpegCommand } from '../FFmpegCommand';
 import { Resolution } from '../utils/ResolutionUtils';
-import { HLSSegment } from './HLSPlaylistGenerator';
+import { HLSSegment } from './types';
 import fs from 'fs-extra';
 import path from 'path';
 import { EventEmitter } from 'events';
-
-// ==================== INTERFACES ====================
-
-/**
- * Configuración de segmentación HLS
- */
-export interface HLSSegmentationConfig {
-    segmentDuration: number;        // Duración de cada segmento en segundos (default: 6)
-    segmentPattern: string;         // Patrón de nombre: "segment_%03d.ts"
-    playlistName: string;           // Nombre del playlist: "quality_720p.m3u8"
-    outputDir: string;              // Directorio de salida
-    hlsFlags?: string[];            // Flags adicionales de HLS
-    deleteThreshold?: number;       // Número de segmentos a mantener (para live)
-}
-
-/**
- * Configuración de video para segmentación
- */
-export interface VideoSegmentConfig {
-    codec: string;                  // "libx264"
-    preset: string;                 // "fast", "medium", "slow"
-    profile: string;                // "baseline", "main", "high"
-    level?: string;                 // "3.0", "3.1", "4.0"
-    bitrate: string;                // "2800k"
-    maxBitrate?: string;            // "3000k"
-    bufferSize?: string;            // "4200k"
-    gopSize?: number;               // Keyframe interval (default: 2 * fps)
-    bFrames?: number;               // B-frames (default: 0 para baseline)
-    pixelFormat?: string;           // "yuv420p"
-}
-
-/**
- * Configuración de audio para segmentación
- */
-export interface AudioSegmentConfig {
-    codec: string;                  // "aac"
-    bitrate: string;                // "128k"
-    sampleRate: number;             // 44100, 48000
-    channels: number;               // 1 (mono), 2 (stereo)
-    profile?: string;               // "aac_low"
-}
-
-/**
- * Opciones de segmentación
- */
-export interface SegmentationOptions {
-    video?: VideoSegmentConfig;
-    audio?: AudioSegmentConfig;
-    subtitle?: {
-        enabled: boolean;
-        burnIn: boolean;            // Quemar subtítulos en video
-    };
-    startTime?: number;             // Tiempo de inicio (para clips)
-    duration?: number;              // Duración (para clips)
-    resolution?: Resolution;        // Resolución target
-    frameRate?: number;             // FPS target
-    twoPass?: boolean;              // Usar encoding de 2 pasadas
-}
-
-/**
- * Resultado de segmentación
- */
-export interface SegmentationResult {
-    playlistPath: string;           // Ruta del playlist generado
-    segmentPaths: string[];         // Rutas de todos los segmentos
-    segments: HLSSegment[];         // Información de segmentos para playlist
-    duration: number;               // Duración total
-    fileSize: number;               // Tamaño total en bytes
-    segmentCount: number;           // Número de segmentos generados
-}
-
-/**
- * Progreso de segmentación
- */
-export interface SegmentationProgress {
-    percent: number;                // Porcentaje completado (0-100)
-    currentSegment: number;         // Segmento actual
-    totalSegments: number;          // Total estimado de segmentos
-    fps: number;                    // FPS actual de encoding
-    speed: string;                  // Velocidad (ej: "2.5x")
-    bitrate: string;                // Bitrate actual
-    timeProcessed: string;          // Tiempo procesado (HH:MM:SS)
-    eta: string;                    // Tiempo estimado restante
-}
-
-// ==================== CLASE PRINCIPAL ====================
-
+import type {
+  HLSSegmentationConfig,
+  VideoSegmentConfig,
+  AudioSegmentConfig,
+  SegmentationOptions,
+  SegmentationResult,
+  SegmentationProgress
+} from './types';
 export class HLSSegmentationManager extends EventEmitter {
     private ffmpegPath: string;
     private ffprobePath: string;

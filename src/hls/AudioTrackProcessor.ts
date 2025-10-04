@@ -1,118 +1,17 @@
 import { FFmpegCommand } from '../FFmpegCommand';
-import { HLSSegmentationManager, AudioSegmentConfig } from './HLSSegmentationManager';
+import { HLSSegmentationManager } from './HLSSegmentationManager';
+import type { AudioSegmentConfig } from './types';
 import fs from 'fs-extra';
 import path from 'path';
 import { EventEmitter } from 'events';
-
-// ==================== INTERFACES ====================
-
-/**
- * Información detallada de una pista de audio
- */
-export interface AudioTrackInfo {
-    index: number;                  // Índice del stream en el archivo
-    streamIndex: number;            // Índice específico de audio (0, 1, 2...)
-    codec: string;                  // Codec original (aac, mp3, ac3, etc.)
-    codecLongName: string;
-    profile?: string;
-    
-    // Características de audio
-    sampleRate: number;             // 44100, 48000, etc.
-    channels: number;               // 1 (mono), 2 (stereo), 6 (5.1), etc.
-    channelLayout: string;          // "stereo", "5.1", "mono"
-    bitrate?: number;               // Bitrate en bps
-    
-    // Metadata
-    language: string;               // Código ISO (en, es, fr, etc.)
-    languageName: string;           // Nombre completo del idioma
-    title?: string;                 // Título personalizado
-    isDefault: boolean;             // Es el audio por defecto
-    
-    // Tags adicionales
-    tags?: Record<string, string>;
-}
-
-/**
- * Configuración de procesamiento de audio
- */
-export interface AudioProcessingConfig {
-    outputDir: string;
-    
-    // Extracción
-    extractAll: boolean;            // Extraer todas las pistas
-    languages?: string[];           // Filtrar por idiomas específicos
-    
-    // Conversión
-    targetCodec: string;            // "aac", "mp3", etc.
-    targetBitrate: string;          // "128k", "192k", etc.
-    targetSampleRate?: number;      // 48000, etc.
-    targetChannels?: number;        // 2 (convertir a stereo), etc.
-    
-    // Naming
-    filenamePattern?: string;       // "audio_{lang}_{quality}"
-    
-    // HLS
-    generateHLS: boolean;           // Generar segmentos HLS
-    segmentDuration?: number;       // Duración de segmentos
-}
-
-/**
- * Pista de audio procesada
- */
-export interface ProcessedAudioTrack {
-    original: AudioTrackInfo;
-    
-    // Audio extraído/convertido
-    audioPath: string;              // Ruta del archivo de audio
-    format: string;                 // Formato del archivo procesado
-    size: number;                   // Tamaño en bytes
-    
-    // HLS (si está habilitado)
-    hlsPlaylistPath?: string;       // Ruta del playlist HLS
-    hlsSegmentPaths?: string[];     // Rutas de segmentos
-    hlsSegmentCount?: number;
-    
-    metadata: {
-        processingTime: number;     // Tiempo de procesamiento en ms
-        originalCodec: string;
-        targetCodec: string;
-        originalBitrate?: number;
-        targetBitrate: string;
-    };
-}
-
-/**
- * Resultado del procesamiento de múltiples pistas
- */
-export interface AudioProcessingResult {
-    success: boolean;
-    tracks: ProcessedAudioTrack[];
-    defaultTrack?: ProcessedAudioTrack;
-    errors: AudioProcessingError[];
-    totalSize: number;
-    totalProcessingTime: number;
-}
-
-/**
- * Error de procesamiento de audio
- */
-export interface AudioProcessingError {
-    trackIndex: number;
-    language: string;
-    error: string;
-    timestamp: Date;
-}
-
-/**
- * Opciones de calidad de audio
- */
-export interface AudioQualityPreset {
-    name: string;
-    bitrate: string;
-    sampleRate: number;
-    codec: string;
-    profile?: string;
-}
+import type {
+  AudioTrackInfo,
+  AudioProcessingConfig,
+  ProcessedAudioTrack,
+  AudioProcessingResult,
+  AudioProcessingError,
+  AudioQualityPreset
+} from './types';
 
 // ==================== CLASE PRINCIPAL ====================
 
@@ -149,12 +48,12 @@ export class AudioTrackProcessor extends EventEmitter {
                     index: stream.index,
                     streamIndex: audioStreamIndex++,
                     codec: stream.codec_name,
-                    codecLongName: stream.codec_name, // No codec_long_name available
-                    profile: undefined, // No profile available in stream interface
-                    sampleRate: stream.sample_rate || 48000,
+                    codecLongName: stream.codec_long_name || stream.codec_name,
+                    profile: stream.profile,
+                    sampleRate: Number(stream.sample_rate) || 48000,
                     channels: stream.channels || 2,
-                    channelLayout: 'stereo', // No channel_layout available, default to stereo
-                    bitrate: stream.bit_rate,
+                    channelLayout: stream.channel_layout || 'stereo',
+                    bitrate: stream.bit_rate ? Number(stream.bit_rate) : undefined,
                     language,
                     languageName: this.getLanguageName(language),
                     title: stream.tags?.title,

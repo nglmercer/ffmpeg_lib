@@ -4,14 +4,16 @@ import path from 'path';
 import fs from 'fs-extra';
 import { MediaMetadataExtractor, MediaMetadata, MediaType } from '../MediaMetadataExtractor';
 import { ResolutionUtils, Resolution } from '../utils/ResolutionUtils';
-import { HLSSegmentationManager, SegmentationResult } from './HLSSegmentationManager';
+import { HLSSegmentationManager } from './HLSSegmentationManager';
 import { 
     HLSPlaylistGenerator, 
-    HLSVariant, 
     HLSVariantBuilder,
-    HLSAudioTrack,
-    HLSSubtitle 
 } from './HLSPlaylistGenerator';
+import type {
+        HLSAudioTrack,
+    HLSSubtitle,
+        HLSVariant
+} from './types';
 import { FFmpegManager } from '../FFmpegManager';
 import { SubtitleProcessor, createDefaultSubtitleConfig } from './SubtitleProcessor';
 
@@ -403,17 +405,29 @@ export class VideoProcessingOrchestrator extends TypedVideoEventEmitter {
     }
 
     /**
-     * Detecta pistas de audio
+     * Detects and maps detailed audio track information from media metadata.
      */
     private detectAudioTracks(metadata: MediaMetadata): AudioTrackInfo[] {
-        return metadata.audioStreams.map((stream, index) => ({
-            index: stream.index,
-            language: stream.language || 'und',
-            name: stream.language ? this.getLanguageName(stream.language) : `Audio ${index + 1}`,
-            codec: stream.codecName,
-            channels: stream.channels || 2,
-            isDefault: index === 0
-        }));
+        let audioStreamIndex = 0;
+        return metadata.audioStreams.map((stream) => {
+            const language = stream.language || 'und';
+            return {
+                index: stream.index,
+                streamIndex: audioStreamIndex++,
+                codec: stream.codecType,
+                codecLongName: stream.codecLongName || stream.codecName,
+                profile: stream.profile,
+                sampleRate: stream.sampleRate || 48000,
+                channels: stream.channels || 2,
+                channelLayout: stream.channelLayout || 'stereo',
+                bitrate: stream.bitrate,
+                language: language,
+                languageName: this.getLanguageName(language),
+                title: stream.tags?.title,
+                isDefault: stream.disposition?.default === 1,
+                tags: stream.tags,
+            };
+        });
     }
 
     /**
@@ -699,7 +713,7 @@ export class VideoProcessingOrchestrator extends TypedVideoEventEmitter {
             const info = trackInfo.find(t => t.language === result.language) || trackInfo[index];
             return {
                 id: `audio_${result.language}`,
-                name: info.name,
+                name: info.title || info.languageName,
                 language: result.language,
                 isDefault: info.isDefault,
                 channels: info.channels,

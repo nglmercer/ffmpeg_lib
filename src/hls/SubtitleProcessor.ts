@@ -385,7 +385,7 @@ export class SubtitleProcessor extends EventEmitter {
         await fs.writeFile(webvttPath, mockContent, 'utf8');
 
         // MOCK: Crear playlist placeholder
-        const mockPlaylist = this.generateMockWebVTTPlaylist(
+        const mockPlaylist = this.generateWebVTTPlaylist(
             path.basename(webvttPath)
         );
         await fs.writeFile(playlistPath, mockPlaylist, 'utf8');
@@ -407,7 +407,7 @@ export class SubtitleProcessor extends EventEmitter {
     /**
      * Genera playlist mock para WEBVTT
      */
-    private generateMockWebVTTPlaylist(vttFilename: string): string {
+    private generateWebVTTPlaylist(vttFilename: string): string {
         return `#EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-TARGETDURATION:3600

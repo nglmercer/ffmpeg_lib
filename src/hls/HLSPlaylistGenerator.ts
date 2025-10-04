@@ -1,70 +1,12 @@
 import fs from 'fs-extra';
 import path from 'path';
-
-// ==================== INTERFACES ====================
-
-/**
- * Información de una variante de calidad
- */
-export interface HLSVariant {
-    name: string;              // "1080p", "720p", etc.
-    width: number;
-    height: number;
-    bandwidth: number;         // bits por segundo
-    videoBitrate: string;      // "5000k"
-    audioBitrate: string;      // "128k"
-    codec: string;             // "avc1.64001f,mp4a.40.2"
-    playlistPath: string;      // "video/quality_1080p.m3u8"
-    frameRate?: number;
-    audioGroup?: string;       // Para audio alternativo
-    subtitleGroup?: string;    // Para subtítulos
-}
-
-/**
- * Información de una pista de audio
- */
-export interface HLSAudioTrack {
-    id: string;                // "audio_es", "audio_en"
-    name: string;              // "Español", "English"
-    language: string;          // "es", "en"
-    isDefault: boolean;
-    channels: number;          // 2 (stereo), 1 (mono)
-    bitrate: string;           // "128k"
-    playlistPath: string;      // "audio/audio_es.m3u8"
-    groupId: string;           // "audio"
-}
-
-/**
- * Información de un subtítulo
- */
-export interface HLSSubtitle {
-    id: string;                // "sub_es", "sub_en"
-    name: string;              // "Español", "English"
-    language: string;          // "es", "en"
-    isDefault: boolean;
-    isForced: boolean;         // Para subtítulos forzados
-    playlistPath: string;      // "subtitles/subtitles_es.m3u8"
-    vttPath: string;           // "subtitles/subtitles_es.vtt"
-    groupId: string;           // "subs"
-}
-
-/**
- * Segmento de video/audio
- */
-export interface HLSSegment {
-    duration: number;          // Duración en segundos
-    uri: string;               // "segment_000.ts"
-}
-
-/**
- * Configuración del generador
- */
-export interface HLSGeneratorConfig {
-    targetDuration: number;    // Duración target de segmentos (default: 6)
-    version: number;           // HLS version (default: 3)
-    playlistType: 'VOD' | 'EVENT';  // Tipo de playlist
-    allowCache: boolean;       // Permitir cache
-}
+import type {
+  HLSVariant,
+  HLSAudioTrack,
+  HLSSubtitle,
+  HLSSegment,
+  HLSGeneratorConfig
+} from './types';
 
 // ==================== CLASE PRINCIPAL ====================
 

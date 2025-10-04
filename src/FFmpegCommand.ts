@@ -54,6 +54,8 @@ export interface ProbeData {
     streams: Array<{
         index: number;
         codec_name: string;
+        codec_long_name?: string;
+        profile?: string;
         codec_type: 'video' | 'audio' | 'subtitle';
         width?: number;
         height?: number;
@@ -61,6 +63,7 @@ export interface ProbeData {
         bit_rate?: number;
         sample_rate?: number;
         channels?: number;
+        channel_layout?: string;
         tags?: Record<string, string>;
         disposition?: Record<string, number>;
     }>;

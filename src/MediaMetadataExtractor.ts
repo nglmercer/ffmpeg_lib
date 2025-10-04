@@ -37,6 +37,7 @@ export interface StreamInfo {
     colorSpace?: string;
     language?: string;
     tags?: Record<string, string>;
+    disposition?: Record<string, number>;
 }
 
 /**
