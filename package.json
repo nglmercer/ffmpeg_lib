@@ -1,7 +1,7 @@
 {
   "name": "ffmpeg-lib",
   "version": "1.1.0",
-  "description": "FFmpeg-based library for video processing",
+  "description": "A comprehensive, fluent, and type-safe Node.js library for programmatic interaction with FFmpeg and FFprobe",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -11,6 +11,15 @@
     }
   },
   "type": "module",
+  "homepage": "https://github.com/nglmercer/ffmpeg_lib#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nglmercer/ffmpeg_lib.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nglmercer/ffmpeg_lib/issues"
+  },
+  "author": "nglmercer",
   "scripts": {
     "start": "bun run dist/index.js",
     "dev": "bun run src/index.ts",
@@ -25,6 +34,7 @@
   "files": [
     "dist",
     "readme.md",
+    "readme.es.md",
     "docs"
   ],
   "bin": {
@@ -34,9 +44,19 @@
     "ffmpeg",
     "video",
     "processing",
-    "converter"
+    "converter",
+    "ffprobe",
+    "hls",
+    "streaming",
+    "multimedia",
+    "typescript",
+    "nodejs",
+    "media",
+    "audio",
+    "transcoding",
+    "subtitle",
+    "metadata"
   ],
-  "author": "",
   "license": "MIT",
   "dependencies": {
     "adm-zip": "^0.5.16",

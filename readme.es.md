@@ -3,8 +3,8 @@
 Una biblioteca de Node.js completa, fluida y tipada para interactuar de manera programática con FFmpeg y FFprobe.
 
 <!-- Opcional: Añade insignias aquí -->
-[![NPM version](https://img.shields.io/npm/v/ffmpeglib.svg)](https://www.npmjs.com/package/ffmpeglib)
-[![Build Status](https://travis-ci.org/your-repo.svg?branch=main)](https://travis-ci.org/your-repo)
+[![NPM version](https://img.shields.io/npm/v/ffmpeg-lib.svg)](https://www.npmjs.com/package/ffmpeg-lib)
+[![Build Status](https://github.com/nglmercer/ffmpeg_lib/workflows/CI/badge.svg)](https://github.com/nglmercer/ffmpeg_lib/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 FFmpegLib ofrece una interfaz potente e intuitiva para manejar operaciones multimedia complejas en Node.js. Abstrae la complejidad de la línea de comandos de FFmpeg mientras ofrece acceso total a sus capacidades, desde conversiones simples hasta empaquetado HLS avanzado y análisis de medios.
@@ -21,7 +21,7 @@ FFmpegLib ofrece una interfaz potente e intuitiva para manejar operaciones multi
 ## Instalación
 
 ```bash
-npm install ffmpeglib
+npm install ffmpeg-lib
 ```
 
 ## Inicio Rápido
