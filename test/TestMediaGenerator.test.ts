@@ -241,12 +241,17 @@ describe('TestMediaGenerator Tests', () => {
   });
   describe('mkv with audio and subtitles', () => {
     test('should generate mkv with audio and subtitles', async () => {
-      const video = await generator.generateVideoWithSubtitles('test_mkv.mp4', {
+      const video = await generator.generateVideoWithSubtitles('test_mkv.mkv', {
         duration: 10
       });
 
       const info = await generator.getMediaInfo(video.path);
       
+      expect(video.type).toBe('video');
+      expect(video.metadata.hasSubtitles).toBe(true);
+      expect(video.path).toContain('.mkv');
+      expect(info.streams).toBeDefined();
+      expect(info.streams.some((stream: any) => stream.codec_type === 'subtitle')).toBe(true);
     }, 30000);
   })
   describe('Cleanup', () => {
