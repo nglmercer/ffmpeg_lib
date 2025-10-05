@@ -1,19 +1,19 @@
 // ==================== test/SubtitleProcessor.test.ts ====================
 
-import { describe as describe3, test as test3, expect as expect3, beforeAll as beforeAll3, afterAll as afterAll3 } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { SubtitleProcessor, SubtitleFormat } from '../../src/hls/SubtitleProcessor';
 import { FFmpegManager } from '../../src/FFmpegManager';
 import fs3 from 'fs-extra';
 import path3 from 'path';
 import os3 from 'os';
 
-describe3('SubtitleProcessor Tests', () => {
+describe('SubtitleProcessor Tests', () => {
     let processor: SubtitleProcessor;
     let testDir: string;
     let ffmpegPath: string;
     let ffprobePath: string;
 
-    beforeAll3(async () => {
+    beforeAll(async () => {
         const ffmpegManager = new FFmpegManager();
         const isAvailable = await ffmpegManager.isFFmpegAvailable();
         if (!isAvailable){
@@ -29,32 +29,32 @@ describe3('SubtitleProcessor Tests', () => {
         processor = new SubtitleProcessor(ffmpegPath, ffprobePath);
     });
 
-    afterAll3(async () => {
+    afterAll(async () => {
         await fs3.remove(testDir);
     });
 
-    describe3('Format Detection', () => {
-        test3('should detect format by extension', () => {
-            expect3(processor.detectFormatByExtension('sub.srt')).toBe(SubtitleFormat.SRT);
-            expect3(processor.detectFormatByExtension('sub.ass')).toBe(SubtitleFormat.ASS);
-            expect3(processor.detectFormatByExtension('sub.vtt')).toBe(SubtitleFormat.WEBVTT);
-            expect3(processor.detectFormatByExtension('sub.ttml')).toBe(SubtitleFormat.TTML);
+    describe('Format Detection', () => {
+        test('should detect format by extension', () => {
+            expect(processor.detectFormatByExtension('sub.srt')).toBe(SubtitleFormat.SRT);
+            expect(processor.detectFormatByExtension('sub.ass')).toBe(SubtitleFormat.ASS);
+            expect(processor.detectFormatByExtension('sub.vtt')).toBe(SubtitleFormat.WEBVTT);
+            expect(processor.detectFormatByExtension('sub.ttml')).toBe(SubtitleFormat.TTML);
         });
 
-        test3('should identify custom formats', () => {
-            expect3(processor.isCustomFormat(SubtitleFormat.ASS)).toBe(true);
-            expect3(processor.isCustomFormat(SubtitleFormat.TTML)).toBe(true);
-            expect3(processor.isCustomFormat(SubtitleFormat.SRT)).toBe(false);
+        test('should identify custom formats', () => {
+            expect(processor.isCustomFormat(SubtitleFormat.ASS)).toBe(true);
+            expect(processor.isCustomFormat(SubtitleFormat.TTML)).toBe(true);
+            expect(processor.isCustomFormat(SubtitleFormat.SRT)).toBe(false);
         });
 
-        test3('should check HLS conversion needs', () => {
-            expect3(processor.needsConversionForHLS(SubtitleFormat.SRT)).toBe(true);
-            expect3(processor.needsConversionForHLS(SubtitleFormat.WEBVTT)).toBe(false);
+        test('should check HLS conversion needs', () => {
+            expect(processor.needsConversionForHLS(SubtitleFormat.SRT)).toBe(true);
+            expect(processor.needsConversionForHLS(SubtitleFormat.WEBVTT)).toBe(false);
         });
     });
 
-    describe3('External Subtitle Processing', () => {
-        test3('should process external SRT subtitle', async () => {
+    describe('External Subtitle Processing', () => {
+        test('should process external SRT subtitle', async () => {
             // Crear subtítulo SRT de prueba
             const srtPath = path3.join(testDir, 'test.srt');
             const srtContent = `1
@@ -75,15 +75,15 @@ Test subtitle line 2`;
 
             const result = await processor.processExternalSubtitle(srtPath, 'en', config);
 
-            expect3(result.language).toBe('en');
-            expect3(result.originalFormat).toBe(SubtitleFormat.SRT);
-            expect3(result.customPath).toBeDefined();
-            expect3(await fs3.pathExists(result.customPath!)).toBe(true);
+            expect(result.language).toBe('en');
+            expect(result.originalFormat).toBe(SubtitleFormat.SRT);
+            expect(result.customPath).toBeDefined();
+            expect(await fs3.pathExists(result.customPath!)).toBe(true);
         });
     });
 
-    describe3('Mock WebVTT Generation', () => {
-        test3('should generate mock WebVTT when enabled', async () => {
+    describe('Mock WebVTT Generation', () => {
+        test('should generate mock WebVTT when enabled', async () => {
             const srtPath = path3.join(testDir, 'test-webvtt.srt');
             await fs3.writeFile(srtPath, '1\n00:00:00,000 --> 00:00:05,000\nTest', 'utf8');
 
@@ -95,9 +95,9 @@ Test subtitle line 2`;
 
             const result = await processor.processExternalSubtitle(srtPath, 'es', config);
 
-            expect3(result.webvttPath).toBeDefined();
-            expect3(result.webvttPlaylistPath).toBeDefined();
-            expect3(await fs3.pathExists(result.webvttPath!)).toBe(true);
+            expect(result.webvttPath).toBeDefined();
+            expect(result.webvttPlaylistPath).toBeDefined();
+            expect(await fs3.pathExists(result.webvttPath!)).toBe(true);
         });
     });
 });

@@ -13,18 +13,50 @@ import type {
   AudioQualityPreset
 } from './types';
 
+// ==================== TIPOS DE EVENTOS ====================
+
+export interface AudioProcessingProgress {
+    type: 'audio-processing';
+    percent: number;
+    currentTrack: number;
+    totalTracks: number;
+    trackLanguage: string;
+    phase: 'extraction' | 'conversion' | 'segmentation';
+    timeProcessed?: string;
+    eta?: string;
+}
+
+export interface AudioProcessingStartEvent {
+    type: 'audio-processing';
+    totalTracks: number;
+    config: AudioProcessingConfig;
+}
+
+export interface AudioProcessingCompleteEvent {
+    type: 'audio-processing';
+    success: boolean;
+    result: AudioProcessingResult;
+    duration: number;
+}
+
 // ==================== CLASE PRINCIPAL ====================
 
 export class AudioTrackProcessor extends EventEmitter {
     private ffmpegPath: string;
     private ffprobePath: string;
     private segmentationManager: HLSSegmentationManager;
+    private startTime: number = 0;
 
     constructor(ffmpegPath: string, ffprobePath: string) {
         super();
         this.ffmpegPath = ffmpegPath;
         this.ffprobePath = ffprobePath;
         this.segmentationManager = new HLSSegmentationManager(ffmpegPath, ffprobePath);
+        
+        // Propagar eventos de segmentación con prefijo
+        this.segmentationManager.on('progress', (data) => {
+            this.emit('hls-progress', data);
+        });
     }
 
     // ==================== DETECCIÓN ====================
@@ -89,7 +121,7 @@ export class AudioTrackProcessor extends EventEmitter {
         inputPath: string,
         config: AudioProcessingConfig
     ): Promise<AudioProcessingResult> {
-        const startTime = Date.now();
+        this.startTime = Date.now();
         const errors: AudioProcessingError[] = [];
 
         // Detectar pistas
@@ -97,47 +129,70 @@ export class AudioTrackProcessor extends EventEmitter {
         
         if (allTracks.length === 0) {
             this.emit('info', 'No audio tracks found');
-            return {
+            const result: AudioProcessingResult = {
                 success: true,
                 tracks: [],
                 errors: [],
                 totalSize: 0,
                 totalProcessingTime: 0
             };
+            this.emit('complete', this.createCompleteEvent(result, true));
+            return result;
         }
 
         // Filtrar pistas según configuración
         let tracksToProcess = allTracks;
 
         if (!config.extractAll) {
-            // Solo procesar pista por defecto
             const defaultTrack = allTracks.find(t => t.isDefault) || allTracks[0];
             tracksToProcess = [defaultTrack];
         } else if (config.languages && config.languages.length > 0) {
-            // Filtrar por idiomas
             tracksToProcess = allTracks.filter(t => 
                 config.languages!.includes(t.language)
             );
         }
 
+        // Emitir evento de inicio
+        const startEvent: AudioProcessingStartEvent = {
+            type: 'audio-processing',
+            totalTracks: tracksToProcess.length,
+            config
+        };
+        this.emit('start', startEvent);
         this.emit('tracks-detected', tracksToProcess.length, allTracks.length);
 
         // Procesar cada pista
         const processedTracks: ProcessedAudioTrack[] = [];
 
-        for (const track of tracksToProcess) {
+        for (let i = 0; i < tracksToProcess.length; i++) {
+            const track = tracksToProcess[i];
+            
             try {
                 this.emit('track-start', track.language, track.streamIndex);
                 
                 const processed = await this.processSingleTrack(
                     inputPath,
                     track,
-                    config
+                    config,
+                    i,
+                    tracksToProcess.length
                 );
 
                 processedTracks.push(processed);
                 
                 this.emit('track-complete', track.language, processed);
+                
+                // Emitir progreso de track completado
+                const trackProgress: AudioProcessingProgress = {
+                    type: 'audio-processing',
+                    percent: ((i + 1) / tracksToProcess.length) * 100,
+                    currentTrack: i + 1,
+                    totalTracks: tracksToProcess.length,
+                    trackLanguage: track.language,
+                    phase: 'conversion'
+                };
+                this.emit('progress', trackProgress);
+                
             } catch (error: any) {
                 errors.push({
                     trackIndex: track.index,
@@ -155,9 +210,9 @@ export class AudioTrackProcessor extends EventEmitter {
 
         // Calcular tamaño total
         const totalSize = processedTracks.reduce((sum, t) => sum + t.size, 0);
-        const totalProcessingTime = Date.now() - startTime;
+        const totalProcessingTime = Date.now() - this.startTime;
 
-        return {
+        const result: AudioProcessingResult = {
             success: errors.length === 0,
             tracks: processedTracks,
             defaultTrack,
@@ -165,6 +220,11 @@ export class AudioTrackProcessor extends EventEmitter {
             totalSize,
             totalProcessingTime
         };
+
+        // Emitir evento de completado
+        this.emit('complete', this.createCompleteEvent(result, errors.length === 0));
+
+        return result;
     }
 
     /**
@@ -173,7 +233,9 @@ export class AudioTrackProcessor extends EventEmitter {
     private async processSingleTrack(
         inputPath: string,
         track: AudioTrackInfo,
-        config: AudioProcessingConfig
+        config: AudioProcessingConfig,
+        currentIndex: number,
+        totalTracks: number
     ): Promise<ProcessedAudioTrack> {
         const trackStartTime = Date.now();
         
@@ -183,12 +245,24 @@ export class AudioTrackProcessor extends EventEmitter {
         const filename = this.generateFilename(track, config);
         const audioPath = path.join(config.outputDir, filename);
 
+        // Emitir progreso: extracción
+        this.emitTrackProgress(currentIndex, totalTracks, track.language, 'extraction', 0);
+
         // Extraer y convertir audio
         await this.extractAndConvertAudio(
             inputPath,
             track,
             audioPath,
-            config
+            config,
+            (percent) => {
+                this.emitTrackProgress(
+                    currentIndex,
+                    totalTracks,
+                    track.language,
+                    'conversion',
+                    percent
+                );
+            }
         );
 
         const stats = await fs.stat(audioPath);
@@ -209,6 +283,8 @@ export class AudioTrackProcessor extends EventEmitter {
 
         // Generar segmentos HLS si está habilitado
         if (config.generateHLS) {
+            this.emitTrackProgress(currentIndex, totalTracks, track.language, 'segmentation', 0);
+            
             const hlsResult = await this.generateHLSForTrack(
                 audioPath,
                 track,
@@ -224,13 +300,14 @@ export class AudioTrackProcessor extends EventEmitter {
     }
 
     /**
-     * Extrae y convierte audio
+     * Extrae y convierte audio con progreso
      */
     private async extractAndConvertAudio(
         inputPath: string,
         track: AudioTrackInfo,
         outputPath: string,
-        config: AudioProcessingConfig
+        config: AudioProcessingConfig,
+        onProgress?: (percent: number) => void
     ): Promise<void> {
         const cmd = new FFmpegCommand({
             ffmpegPath: this.ffmpegPath,
@@ -265,8 +342,16 @@ export class AudioTrackProcessor extends EventEmitter {
         }
         
         cmd.outputOptions(metadata);
-
         cmd.output(outputPath);
+
+        // Capturar progreso
+        if (onProgress) {
+            cmd.on('progress', (progress) => {
+                if (progress.percent) {
+                    onProgress(progress.percent);
+                }
+            });
+        }
 
         await cmd.run();
     }
@@ -309,7 +394,7 @@ export class AudioTrackProcessor extends EventEmitter {
     // ==================== EXTRACCIÓN SIMPLE ====================
 
     /**
-     * Extrae audio completo sin segmentar (útil para descarga)
+     * Extrae audio completo sin segmentar
      */
     async extractFullAudio(
         inputPath: string,
@@ -329,7 +414,6 @@ export class AudioTrackProcessor extends EventEmitter {
 
         cmd.input(inputPath);
 
-        // Seleccionar track específico o el primero
         if (options?.trackIndex !== undefined) {
             cmd.outputOptions(['-map', `0:a:${options.trackIndex}`]);
         } else {
@@ -337,8 +421,6 @@ export class AudioTrackProcessor extends EventEmitter {
         }
 
         cmd.noVideo();
-
-        // Configuración de audio
         cmd.audioCodec(options?.codec || 'aac');
         
         if (options?.bitrate) {
@@ -354,15 +436,54 @@ export class AudioTrackProcessor extends EventEmitter {
         }
 
         cmd.output(outputPath);
-
         await cmd.run();
+    }
+
+    // ==================== UTILIDADES DE EVENTOS ====================
+
+    /**
+     * Emite progreso de track individual
+     */
+    private emitTrackProgress(
+        currentTrack: number,
+        totalTracks: number,
+        language: string,
+        phase: 'extraction' | 'conversion' | 'segmentation',
+        phasePercent: number
+    ): void {
+        const trackBasePercent = (currentTrack / totalTracks) * 100;
+        const trackRangePercent = (1 / totalTracks) * 100;
+        const totalPercent = trackBasePercent + (phasePercent / 100) * trackRangePercent;
+
+        const progress: AudioProcessingProgress = {
+            type: 'audio-processing',
+            percent: Math.min(100, totalPercent),
+            currentTrack: currentTrack + 1,
+            totalTracks,
+            trackLanguage: language,
+            phase
+        };
+
+        this.emit('progress', progress);
+    }
+
+    /**
+     * Crea evento de completado
+     */
+    private createCompleteEvent(
+        result: AudioProcessingResult,
+        success: boolean
+    ): AudioProcessingCompleteEvent {
+        return {
+            type: 'audio-processing',
+            success,
+            result,
+            duration: Date.now() - this.startTime
+        };
     }
 
     // ==================== UTILIDADES ====================
 
-    /**
-     * Genera nombre de archivo para audio
-     */
     private generateFilename(track: AudioTrackInfo, config: AudioProcessingConfig): string {
         const pattern = config.filenamePattern || 'audio_{lang}';
         const extension = this.getExtensionForCodec(config.targetCodec);
@@ -375,9 +496,6 @@ export class AudioTrackProcessor extends EventEmitter {
         return `${filename}.${extension}`;
     }
 
-    /**
-     * Obtiene extensión para un codec
-     */
     private getExtensionForCodec(codec: string): string {
         const extMap: Record<string, string> = {
             'aac': 'm4a',
@@ -388,53 +506,29 @@ export class AudioTrackProcessor extends EventEmitter {
             'ac3': 'ac3',
             'eac3': 'eac3'
         };
-
         return extMap[codec.toLowerCase()] || 'm4a';
     }
 
-    /**
-     * Obtiene nombre de idioma
-     */
     private getLanguageName(code: string): string {
         const languages: Record<string, string> = {
-            'en': 'English',
-            'es': 'Español',
-            'fr': 'Français',
-            'de': 'Deutsch',
-            'it': 'Italiano',
-            'pt': 'Português',
-            'ja': '日本語',
-            'zh': '中文',
-            'ko': '한국어',
-            'ru': 'Русский',
-            'ar': 'العربية',
-            'hi': 'हिन्दी',
-            'tr': 'Türkçe',
-            'pl': 'Polski',
-            'nl': 'Nederlands',
-            'sv': 'Svenska',
-            'da': 'Dansk',
-            'no': 'Norsk',
-            'fi': 'Suomi',
-            'und': 'Unknown'
+            'en': 'English', 'es': 'Español', 'fr': 'Français',
+            'de': 'Deutsch', 'it': 'Italiano', 'pt': 'Português',
+            'ja': '日本語', 'zh': '中文', 'ko': '한국어',
+            'ru': 'Русский', 'ar': 'العربية', 'hi': 'हिन्दी',
+            'tr': 'Türkçe', 'pl': 'Polski', 'nl': 'Nederlands',
+            'sv': 'Svenska', 'da': 'Dansk', 'no': 'Norsk',
+            'fi': 'Suomi', 'und': 'Unknown'
         };
-        
         return languages[code] || code.toUpperCase();
     }
 
-    /**
-     * Valida si un codec requiere conversión
-     */
     needsConversion(sourceCodec: string, targetCodec: string): boolean {
         return sourceCodec.toLowerCase() !== targetCodec.toLowerCase();
     }
 
-    /**
-     * Estima tamaño de audio procesado
-     */
     estimateAudioSize(duration: number, bitrate: string): number {
         const bitrateKbps = parseInt(bitrate.replace('k', ''));
-        return (duration * bitrateKbps * 1000) / 8; // bytes
+        return (duration * bitrateKbps * 1000) / 8;
     }
 }
 
@@ -473,13 +567,10 @@ export const AUDIO_QUALITY_PRESETS: Record<string, AudioQualityPreset> = {
 
 // ==================== HELPER FUNCTIONS ====================
 
-/**
- * Crea configuración por defecto
- */
 export function createDefaultAudioConfig(outputDir: string): AudioProcessingConfig {
     return {
         outputDir,
-        extractAll: false,              // Solo audio por defecto
+        extractAll: false,
         targetCodec: 'aac',
         targetBitrate: '128k',
         targetSampleRate: 48000,
@@ -489,9 +580,6 @@ export function createDefaultAudioConfig(outputDir: string): AudioProcessingConf
     };
 }
 
-/**
- * Crea configuración para múltiples idiomas
- */
 export function createMultiLanguageAudioConfig(
     outputDir: string,
     languages: string[]
@@ -509,16 +597,10 @@ export function createMultiLanguageAudioConfig(
     };
 }
 
-/**
- * Detecta si el audio es multicanal (5.1, 7.1, etc.)
- */
 export function isMultiChannelAudio(channels: number): boolean {
     return channels > 2;
 }
 
-/**
- * Obtiene descripción del layout de canales
- */
 export function getChannelLayoutDescription(layout: string): string {
     const descriptions: Record<string, string> = {
         'mono': '1.0 Mono',
@@ -529,7 +611,6 @@ export function getChannelLayoutDescription(layout: string): string {
         '7.1': '7.1 Surround',
         '7.1(wide)': '7.1 Surround (Wide)'
     };
-
     return descriptions[layout] || layout;
 }
 

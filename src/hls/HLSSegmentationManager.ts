@@ -12,9 +12,42 @@ import type {
   SegmentationResult,
   SegmentationProgress
 } from './types';
+
+// ==================== TIPOS DE EVENTOS ESTANDARIZADOS ====================
+
+export interface HLSSegmentationStartEvent {
+    type: 'hls-segmentation';
+    inputPath: string;
+    config: HLSSegmentationConfig;
+    options: SegmentationOptions;
+    estimatedSegments: number;
+}
+
+export interface HLSSegmentationProgressEvent {
+    type: 'hls-segmentation';
+    percent: number;
+    currentSegment: number;
+    totalSegments: number;
+    fps: number;
+    speed: string;
+    bitrate: string;
+    timeProcessed: string;
+    eta: string;
+    phase: 'segmenting' | 'finalizing';
+}
+
+export interface HLSSegmentationCompleteEvent {
+    type: 'hls-segmentation';
+    success: boolean;
+    result: SegmentationResult;
+    duration: number;
+}
+
 export class HLSSegmentationManager extends EventEmitter {
     private ffmpegPath: string;
     private ffprobePath: string;
+    private startTime: number = 0;
+    private videoDuration: number = 0;
 
     constructor(ffmpegPath: string, ffprobePath: string) {
         super();
@@ -32,10 +65,18 @@ export class HLSSegmentationManager extends EventEmitter {
         config: HLSSegmentationConfig,
         options: SegmentationOptions = {}
     ): Promise<SegmentationResult> {
+        this.startTime = Date.now();
+
         // Validar entrada
         if (!await fs.pathExists(inputPath)) {
             throw new Error(`Input file not found: ${inputPath}`);
         }
+
+        // Obtener duración del video
+        const probeData = await FFmpegCommand.probe(inputPath, {
+            ffprobePath: this.ffprobePath
+        });
+        this.videoDuration = probeData.format.duration || 0;
 
         // Crear directorio de salida
         await fs.ensureDir(config.outputDir);
@@ -44,6 +85,19 @@ export class HLSSegmentationManager extends EventEmitter {
         const playlistPath = path.join(config.outputDir, config.playlistName);
         const segmentPath = path.join(config.outputDir, config.segmentPattern);
 
+        // Calcular segmentos estimados
+        const estimatedSegments = Math.ceil(this.videoDuration / config.segmentDuration);
+
+        // Emitir evento de inicio
+        const startEvent: HLSSegmentationStartEvent = {
+            type: 'hls-segmentation',
+            inputPath,
+            config,
+            options,
+            estimatedSegments
+        };
+        this.emit('start', startEvent);
+
         // Crear comando FFmpeg
         const cmd = new FFmpegCommand({
             ffmpegPath: this.ffmpegPath,
@@ -51,7 +105,8 @@ export class HLSSegmentationManager extends EventEmitter {
         });
 
         cmd.input(inputPath);
-        cmd.outputOptions(['-sn']);
+        cmd.outputOptions(['-sn']); // Sin subtítulos
+
         // Aplicar opciones de tiempo
         if (options.startTime !== undefined) {
             cmd.seekInput(options.startTime);
@@ -70,7 +125,6 @@ export class HLSSegmentationManager extends EventEmitter {
         if (options.audio) {
             this.applyAudioConfig(cmd, options.audio);
         } else {
-            // Audio por defecto
             cmd.audioCodec('aac')
                .audioBitrate('128k')
                .audioChannels(2);
@@ -94,18 +148,55 @@ export class HLSSegmentationManager extends EventEmitter {
 
         // Eventos de progreso
         cmd.on('progress', (progress) => {
-            this.emit('progress', this.parseProgress(progress, config));
+            const progressEvent = this.parseProgress(progress, config, estimatedSegments);
+            this.emit('progress', progressEvent);
         });
 
         cmd.on('start', (command) => {
-            this.emit('start', command);
+            this.emit('ffmpeg-start', command);
         });
 
         // Ejecutar
-        await cmd.run();
+        try {
+            await cmd.run();
 
-        // Recopilar resultado
-        return await this.collectSegmentationResult(config, playlistPath);
+            // Emitir fase de finalización
+            this.emit('progress', {
+                type: 'hls-segmentation',
+                percent: 100,
+                currentSegment: estimatedSegments,
+                totalSegments: estimatedSegments,
+                fps: 0,
+                speed: '1.0x',
+                bitrate: '0kbps',
+                timeProcessed: '00:00:00',
+                eta: '00:00:00',
+                phase: 'finalizing'
+            } as HLSSegmentationProgressEvent);
+
+            // Recopilar resultado
+            const result = await this.collectSegmentationResult(config, playlistPath);
+
+            // Emitir evento de completado
+            const completeEvent: HLSSegmentationCompleteEvent = {
+                type: 'hls-segmentation',
+                success: true,
+                result,
+                duration: Date.now() - this.startTime
+            };
+            this.emit('complete', completeEvent);
+
+            return result;
+        } catch (error: any) {
+            const errorEvent: HLSSegmentationCompleteEvent = {
+                type: 'hls-segmentation',
+                success: false,
+                result: {} as any,
+                duration: Date.now() - this.startTime
+            };
+            this.emit('complete', errorEvent);
+            throw error;
+        }
     }
 
     /**
@@ -152,7 +243,7 @@ export class HLSSegmentationManager extends EventEmitter {
 
         // Flags para streaming
         outputOpts.push('-movflags', '+faststart');
-        outputOpts.push('-sc_threshold', '0'); // Deshabilitar scene change detection
+        outputOpts.push('-sc_threshold', '0');
 
         cmd.outputOptions(outputOpts);
     }
@@ -182,7 +273,7 @@ export class HLSSegmentationManager extends EventEmitter {
         const hlsOpts: string[] = [
             '-f', 'hls',
             '-hls_time', config.segmentDuration.toString(),
-            '-hls_list_size', '0',  // Incluir todos los segmentos
+            '-hls_list_size', '0',
             '-hls_segment_type', 'mpegts',
             '-hls_segment_filename', segmentPath
         ];
@@ -205,10 +296,29 @@ export class HLSSegmentationManager extends EventEmitter {
         audioConfig: AudioSegmentConfig,
         streamIndex?: number
     ): Promise<SegmentationResult> {
+        this.startTime = Date.now();
+
         await fs.ensureDir(config.outputDir);
 
         const playlistPath = path.join(config.outputDir, config.playlistName);
         const segmentPath = path.join(config.outputDir, config.segmentPattern);
+
+        // Obtener duración
+        const probeData = await FFmpegCommand.probe(inputPath, {
+            ffprobePath: this.ffprobePath
+        });
+        this.videoDuration = probeData.format.duration || 0;
+        const estimatedSegments = Math.ceil(this.videoDuration / config.segmentDuration);
+
+        // Emitir evento de inicio
+        const startEvent: HLSSegmentationStartEvent = {
+            type: 'hls-segmentation',
+            inputPath,
+            config,
+            options: {},
+            estimatedSegments
+        };
+        this.emit('start', startEvent);
 
         const cmd = new FFmpegCommand({
             ffmpegPath: this.ffmpegPath,
@@ -235,12 +345,34 @@ export class HLSSegmentationManager extends EventEmitter {
 
         // Eventos
         cmd.on('progress', (progress) => {
-            this.emit('progress', this.parseProgress(progress, config));
+            const progressEvent = this.parseProgress(progress, config, estimatedSegments);
+            this.emit('progress', progressEvent);
         });
 
-        await cmd.run();
+        try {
+            await cmd.run();
 
-        return await this.collectSegmentationResult(config, playlistPath);
+            const result = await this.collectSegmentationResult(config, playlistPath);
+
+            const completeEvent: HLSSegmentationCompleteEvent = {
+                type: 'hls-segmentation',
+                success: true,
+                result,
+                duration: Date.now() - this.startTime
+            };
+            this.emit('complete', completeEvent);
+
+            return result;
+        } catch (error: any) {
+            const errorEvent: HLSSegmentationCompleteEvent = {
+                type: 'hls-segmentation',
+                success: false,
+                result: {} as any,
+                duration: Date.now() - this.startTime
+            };
+            this.emit('complete', errorEvent);
+            throw error;
+        }
     }
 
     // ==================== UTILIDADES ====================
@@ -252,11 +384,9 @@ export class HLSSegmentationManager extends EventEmitter {
         config: HLSSegmentationConfig,
         playlistPath: string
     ): Promise<SegmentationResult> {
-        // Leer playlist para obtener segmentos
         const playlistContent = await fs.readFile(playlistPath, 'utf8');
         const segments = this.parsePlaylistSegments(playlistContent);
 
-        // Recopilar rutas de segmentos
         const segmentPaths: string[] = [];
         let totalSize = 0;
 
@@ -269,7 +399,6 @@ export class HLSSegmentationManager extends EventEmitter {
             }
         }
 
-        // Calcular duración total
         const duration = segments.reduce((sum, seg) => sum + seg.duration, 0);
 
         return {
@@ -308,20 +437,25 @@ export class HLSSegmentationManager extends EventEmitter {
     /**
      * Parsea progreso para emitir eventos más informativos
      */
-    private parseProgress(progress: any, config: HLSSegmentationConfig): SegmentationProgress {
+    private parseProgress(
+        progress: any,
+        config: HLSSegmentationConfig,
+        estimatedSegments: number
+    ): HLSSegmentationProgressEvent {
         const percent = progress.percent || 0;
-        const estimatedSegments = Math.ceil(progress.targetSize / config.segmentDuration);
         const currentSegment = Math.floor((percent / 100) * estimatedSegments);
 
         return {
+            type: 'hls-segmentation',
             percent: Math.min(100, Math.max(0, percent)),
             currentSegment,
             totalSegments: estimatedSegments,
             fps: progress.currentFps || 0,
-            speed: `${(progress.currentFps / 30).toFixed(1)}x`,
-            bitrate: `${progress.currentKbps}kbps`,
+            speed: `${((progress.currentFps || 0) / 30).toFixed(1)}x`,
+            bitrate: `${progress.currentKbps || 0}kbps`,
             timeProcessed: progress.timemark || '00:00:00',
-            eta: this.calculateETA(percent, progress.timemark)
+            eta: this.calculateETA(percent, progress.timemark),
+            phase: 'segmenting'
         };
     }
 
@@ -354,13 +488,11 @@ export class HLSSegmentationManager extends EventEmitter {
     ): VideoSegmentConfig {
         const height = resolution.height;
         
-        // Detectar profile
         let profile: 'baseline' | 'main' | 'high';
         if (height >= 1080) profile = 'high';
         else if (height >= 720) profile = 'main';
         else profile = 'baseline';
 
-        // GOP size: 2 segundos a 30fps = 60 frames
         const gopSize = 60;
 
         return {
@@ -398,7 +530,7 @@ export class HLSSegmentationManager extends EventEmitter {
     }
 
     /**
-     * Segmenta múltiples calidades en paralelo
+     * Segmenta múltiples calidades con progreso unificado
      */
     async segmentMultipleQualities(
         inputPath: string,
@@ -413,9 +545,10 @@ export class HLSSegmentationManager extends EventEmitter {
         const results: SegmentationResult[] = [];
         const preset = options?.preset || 'fast';
         const audioQuality = options?.audioQuality || 'medium';
+        const totalQualities = resolutions.length;
 
-        const tasks = resolutions.map(async (resolution) => {
-            const outputDir = path.join(outputBaseDir, 'video');
+        const tasks = resolutions.map(async (resolution, index) => {
+            const outputDir = path.join(outputBaseDir, resolution.name);
             
             const config: HLSSegmentationConfig = {
                 segmentDuration: 6,
@@ -427,17 +560,40 @@ export class HLSSegmentationManager extends EventEmitter {
             const videoConfig = HLSSegmentationManager.createVideoConfig(resolution, preset);
             const audioConfig = HLSSegmentationManager.createAudioConfig(audioQuality);
 
-            this.emit('quality-start', resolution.name);
+            this.emit('quality-start', resolution.name, index + 1, totalQualities);
 
-            const result = await this.segmentVideo(inputPath, config, {
-                video: videoConfig,
-                audio: audioConfig,
-                resolution
-            });
+            // Crear un listener temporal para esta calidad
+            const qualityProgressHandler = (progress: HLSSegmentationProgressEvent) => {
+                // Calcular progreso global: cada calidad representa un porcentaje del total
+                const qualityBasePercent = (index / totalQualities) * 100;
+                const qualityRangePercent = (1 / totalQualities) * 100;
+                const globalPercent = qualityBasePercent + (progress.percent / 100) * qualityRangePercent;
 
-            this.emit('quality-complete', resolution.name, result);
+                this.emit('quality-progress', {
+                    quality: resolution.name,
+                    qualityIndex: index + 1,
+                    totalQualities,
+                    qualityPercent: progress.percent,
+                    globalPercent: Math.min(100, globalPercent),
+                    ...progress
+                });
+            };
 
-            return result;
+            this.on('progress', qualityProgressHandler);
+
+            try {
+                const result = await this.segmentVideo(inputPath, config, {
+                    video: videoConfig,
+                    audio: audioConfig,
+                    resolution
+                });
+
+                this.emit('quality-complete', resolution.name, index + 1, totalQualities, result);
+
+                return result;
+            } finally {
+                this.removeListener('progress', qualityProgressHandler);
+            }
         });
 
         if (options?.parallel) {

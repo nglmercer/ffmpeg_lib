@@ -32,6 +32,7 @@ export interface ProgressInfo {
     targetSize: number;
     timemark: string;
     percent?: number;
+    totalDuration?: number;
 }
 
 export interface ScreenshotOptions {
@@ -73,7 +74,6 @@ export class FFmpegCommand extends EventEmitter {
     private ffmpegPath: string;
     private ffprobePath: string;
     private inputFiles: string[] = [];
-    // Per-input options that must appear immediately before their corresponding -i
     private inputPerFileOpts: string[][] = [];
     private outputFile: string = '';
     private inputOpts: string[] = [];
@@ -83,6 +83,7 @@ export class FFmpegCommand extends EventEmitter {
     private complexFiltersArray: string[] = [];
     private timeout?: number;
     private killed = false;
+    private totalDuration: number = 0; // Duración total del input
     
     private tokenizeOptionString(str: string): string[] {
         return tokenizeOptionStringInternal(str);
@@ -101,7 +102,6 @@ export class FFmpegCommand extends EventEmitter {
     
     input(source: string): this {
         this.inputFiles.push(source);
-        // Keep per-file options aligned with inputs
         this.inputPerFileOpts.push([]);
         return this;
     }
@@ -282,10 +282,6 @@ export class FFmpegCommand extends EventEmitter {
         return this;
     }
 
-    /**
-     * Attach options to a specific input so they appear immediately
-     * before its corresponding `-i` argument (e.g., `-f lavfi`).
-     */
     inputWithOptions(source: string, options: string | string[]): this {
         const tokens = Array.isArray(options)
             ? options.flatMap(opt => (typeof opt === 'string' ? this.tokenizeOptionString(opt) : [opt as any]))
@@ -295,7 +291,6 @@ export class FFmpegCommand extends EventEmitter {
         return this;
     }
 
-    /** Convenience for adding a lavfi input (e.g., testsrc, sine, color) */
     inputLavfi(source: string): this {
         return this.inputWithOptions(source, ['-f', 'lavfi']);
     }
@@ -315,12 +310,13 @@ export class FFmpegCommand extends EventEmitter {
     private buildArgs(): string[] {
         const args: string[] = ['-y']; // overwrite output
 
-        // Input options
+        // Agregar progreso en formato parseable
+        args.push('-progress', 'pipe:1');
+
         if (this.inputOpts.length > 0) {
             args.push(...this.inputOpts);
         }
 
-        // Input files
         for (let i = 0; i < this.inputFiles.length; i++) {
             const perInputOpts = this.inputPerFileOpts[i] || [];
             if (perInputOpts.length > 0) {
@@ -329,27 +325,22 @@ export class FFmpegCommand extends EventEmitter {
             args.push('-i', this.inputFiles[i]);
         }
 
-        // Complex filters
         if (this.complexFiltersArray.length > 0) {
             args.push('-filter_complex', this.complexFiltersArray.join(';'));
         }
 
-        // Video filters
         if (this.videoFiltersArray.length > 0) {
             args.push('-vf', this.videoFiltersArray.join(','));
         }
 
-        // Audio filters
         if (this.audioFiltersArray.length > 0) {
             args.push('-af', this.audioFiltersArray.join(','));
         }
 
-        // Output options
         if (this.outputOpts.length > 0) {
             args.push(...this.outputOpts);
         }
 
-        // Output file
         if (this.outputFile) {
             args.push(this.outputFile);
         }
@@ -357,14 +348,33 @@ export class FFmpegCommand extends EventEmitter {
         return args;
     }
 
+    /**
+     * Obtiene la duración del input antes de procesar
+     */
+    private async getDuration(inputPath: string): Promise<number> {
+        try {
+            const probeData = await FFmpegCommand.probe(inputPath, {
+                ffprobePath: this.ffprobePath
+            });
+            return probeData.format.duration || 0;
+        } catch (error) {
+            return 0;
+        }
+    }
+
     async run(): Promise<void> {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             if (this.inputFiles.length === 0) {
                 return reject(new Error('No input file specified'));
             }
 
             if (!this.outputFile) {
                 return reject(new Error('No output file specified'));
+            }
+
+            // Obtener duración del primer input
+            if (this.inputFiles.length > 0 && this.inputFiles[0] !== 'pipe:0') {
+                this.totalDuration = await this.getDuration(this.inputFiles[0]);
             }
 
             const args = this.buildArgs();
@@ -374,6 +384,7 @@ export class FFmpegCommand extends EventEmitter {
             const process = spawn(this.ffmpegPath, args);
             
             let stderr = '';
+            let stdout = '';
 
             if (this.timeout) {
                 setTimeout(() => {
@@ -385,16 +396,23 @@ export class FFmpegCommand extends EventEmitter {
                 }, this.timeout);
             }
 
+            // Capturar stdout para progress
+            process.stdout.on('data', (data) => {
+                stdout += data.toString();
+                const progress = this.parseProgressOutput(stdout);
+                if (progress) {
+                    this.emit('progress', progress);
+                }
+            });
+
+            // Capturar stderr para información adicional
             process.stderr.on('data', (data) => {
                 stderr += data.toString();
                 
-                // Parse progress
-                const progressMatch = stderr.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
-                if (progressMatch) {
-                    const progress = this.parseProgress(stderr);
-                    if (progress) {
-                        this.emit('progress', progress);
-                    }
+                // También intentar parsear progreso del stderr como fallback
+                const progress = this.parseStderrProgress(stderr);
+                if (progress) {
+                    this.emit('progress', progress);
                 }
             });
 
@@ -415,7 +433,52 @@ export class FFmpegCommand extends EventEmitter {
         });
     }
 
-    private parseProgress(stderr: string): ProgressInfo | null {
+    /**
+     * Parsea la salida de progreso de FFmpeg (stdout con -progress pipe:1)
+     */
+    private parseProgressOutput(output: string): ProgressInfo | null {
+        const lines = output.split('\n');
+        const progressData: any = {};
+
+        for (const line of lines) {
+            const [key, value] = line.split('=');
+            if (key && value) {
+                progressData[key.trim()] = value.trim();
+            }
+        }
+
+        if (!progressData.out_time_ms && !progressData.out_time) {
+            return null;
+        }
+
+        // Calcular progreso basado en tiempo
+        let processedMicroseconds = 0;
+        if (progressData.out_time_ms) {
+            processedMicroseconds = parseInt(progressData.out_time_ms);
+        } else if (progressData.out_time) {
+            processedMicroseconds = this.timeToMicroseconds(progressData.out_time);
+        }
+
+        const processedSeconds = processedMicroseconds / 1000000;
+        const percent = this.totalDuration > 0 
+            ? (processedSeconds / this.totalDuration) * 100 
+            : 0;
+
+        return {
+            frames: parseInt(progressData.frame) || 0,
+            currentFps: parseFloat(progressData.fps) || 0,
+            currentKbps: parseFloat(progressData.bitrate?.replace('kbits/s', '')) || 0,
+            targetSize: parseInt(progressData.total_size) || 0,
+            timemark: this.microsecondsToTime(processedMicroseconds),
+            percent: Math.min(100, Math.max(0, percent)),
+            totalDuration: this.totalDuration
+        };
+    }
+
+    /**
+     * Parsea progreso del stderr (método legacy)
+     */
+    private parseStderrProgress(stderr: string): ProgressInfo | null {
         const timeMatch = stderr.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
         const framesMatch = stderr.match(/frame=\s*(\d+)/);
         const fpsMatch = stderr.match(/fps=\s*(\d+\.?\d*)/);
@@ -424,18 +487,57 @@ export class FFmpegCommand extends EventEmitter {
 
         if (!timeMatch) return null;
 
+        const timemark = timeMatch[0].replace('time=', '');
+        const parts = timemark.split(':');
+        const hours = parseFloat(parts[0]);
+        const minutes = parseFloat(parts[1]);
+        const seconds = parseFloat(parts[2]);
+        const processedSeconds = hours * 3600 + minutes * 60 + seconds;
+
+        const percent = this.totalDuration > 0 
+            ? (processedSeconds / this.totalDuration) * 100 
+            : 0;
+
         return {
             frames: framesMatch ? parseInt(framesMatch[1]) : 0,
             currentFps: fpsMatch ? parseFloat(fpsMatch[1]) : 0,
             currentKbps: bitrateMatch ? parseFloat(bitrateMatch[1]) : 0,
             targetSize: sizeMatch ? parseInt(sizeMatch[1]) : 0,
-            timemark: timeMatch[0].replace('time=', ''),
+            timemark,
+            percent: Math.min(100, Math.max(0, percent)),
+            totalDuration: this.totalDuration
         };
+    }
+
+    /**
+     * Convierte tiempo HH:MM:SS.MS a microsegundos
+     */
+    private timeToMicroseconds(time: string): number {
+        const parts = time.split(':');
+        if (parts.length !== 3) return 0;
+
+        const hours = parseFloat(parts[0]);
+        const minutes = parseFloat(parts[1]);
+        const seconds = parseFloat(parts[2]);
+
+        return (hours * 3600 + minutes * 60 + seconds) * 1000000;
+    }
+
+    /**
+     * Convierte microsegundos a formato HH:MM:SS.MS
+     */
+    private microsecondsToTime(microseconds: number): string {
+        const totalSeconds = microseconds / 1000000;
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = (totalSeconds % 60).toFixed(2);
+
+        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.padStart(5, '0')}`;
     }
 
     // ==================== PROBE ====================
     
-    static async probe(file: string, options?: FFmpegOptions): Promise<ProbeData> {
+    static async probe(file: string, options?: FFmpegOptions): Promise<any> {
         const manager = new FFmpegManager();
         const ffprobePath = options?.ffprobePath || manager.getFFprobePath();
 
@@ -466,7 +568,7 @@ export class FFmpegCommand extends EventEmitter {
 
     // ==================== SCREENSHOTS ====================
     
-    async screenshots(options: ScreenshotOptions): Promise<string[]> {
+    async screenshots(options: any): Promise<string[]> {
         const folder = options.folder || './screenshots';
         await fs.ensureDir(folder);
 
@@ -513,7 +615,6 @@ export class FFmpegCommand extends EventEmitter {
             this.output(outputPattern);
             await this.run();
             
-            // Return generated files
             const files = await fs.readdir(folder);
             return files
                 .filter(f => f.startsWith('screenshot-'))
@@ -527,7 +628,6 @@ export class FFmpegCommand extends EventEmitter {
     
     kill(signal: string = 'SIGKILL'): void {
         this.killed = true;
-        // Process killing would be handled in run() method
     }
 
     clone(): FFmpegCommand {
@@ -550,21 +650,6 @@ export class FFmpegCommand extends EventEmitter {
     }
 }
 
-// Helper function for static paths
-export function setFFmpegPath(path: string): void {
-    // This would set a global path if needed
-}
-
-export function setFFprobePath(path: string): void {
-    // This would set a global path if needed
-}
-
-// Internal utility for tokenizing option strings while preserving quoted values
-// Placed outside the class scope to avoid re-creating per instance if needed
-// but referenced via class method for clarity.
-// Note: Node spawn passes each array element as a single argv token; we split
-// combined option strings like "-movflags +faststart" into ["-movflags", "+faststart"].
-// Quoted segments like 'title="My Video"' become ["title=My Video"].
 export function tokenizeOptionStringInternal(str: string): string[] {
     const tokens: string[] = [];
     const regex = /"([^"]*)"|'([^']*)'|[^\s]+/g;
