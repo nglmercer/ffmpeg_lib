@@ -377,16 +377,18 @@ describe('HLSSegmentationManager Tests', () => {
 
             const globalProgress: number[] = [];
 
-            let lastQuality = '';
             let qualityProgress: Record<string, number[]> = {};
             
             manager.on('quality-progress', (data) => {
                 if (!qualityProgress[data.quality]) {
                     qualityProgress[data.quality] = [];
                 }
+                globalProgress.push(data.globalPercent); 
                 qualityProgress[data.quality].push(data.qualityPercent);
             });
-
+            manager.on('progress', (data) => {
+                globalProgress.push(data.globalPercent);
+            })
             await manager.segmentMultipleQualities(
                 testVideoPath,
                 outputDir,
