@@ -48,6 +48,8 @@ export class HLSSegmentationManager extends EventEmitter {
     private ffprobePath: string;
     private startTime: number = 0;
     private videoDuration: number = 0;
+    private lastEmittedPercent: number = -1;
+    private progressThrottle: number = 100; // ms entre emisiones
 
     constructor(ffmpegPath: string, ffprobePath: string) {
         super();
@@ -57,38 +59,29 @@ export class HLSSegmentationManager extends EventEmitter {
 
     // ==================== SEGMENTACIÓN PRINCIPAL ====================
 
-    /**
-     * Segmenta un video en formato HLS
-     */
     async segmentVideo(
         inputPath: string,
         config: HLSSegmentationConfig,
         options: SegmentationOptions = {}
     ): Promise<SegmentationResult> {
         this.startTime = Date.now();
+        this.lastEmittedPercent = -1;
 
-        // Validar entrada
         if (!await fs.pathExists(inputPath)) {
             throw new Error(`Input file not found: ${inputPath}`);
         }
 
-        // Obtener duración del video
         const probeData = await FFmpegCommand.probe(inputPath, {
             ffprobePath: this.ffprobePath
         });
         this.videoDuration = probeData.format.duration || 0;
 
-        // Crear directorio de salida
         await fs.ensureDir(config.outputDir);
 
-        // Construir rutas
         const playlistPath = path.join(config.outputDir, config.playlistName);
         const segmentPath = path.join(config.outputDir, config.segmentPattern);
-
-        // Calcular segmentos estimados
         const estimatedSegments = Math.ceil(this.videoDuration / config.segmentDuration);
 
-        // Emitir evento de inicio
         const startEvent: HLSSegmentationStartEvent = {
             type: 'hls-segmentation',
             inputPath,
@@ -98,16 +91,14 @@ export class HLSSegmentationManager extends EventEmitter {
         };
         this.emit('start', startEvent);
 
-        // Crear comando FFmpeg
         const cmd = new FFmpegCommand({
             ffmpegPath: this.ffmpegPath,
             ffprobePath: this.ffprobePath
         });
 
         cmd.input(inputPath);
-        cmd.outputOptions(['-sn']); // Sin subtítulos
+        cmd.outputOptions(['-sn']);
 
-        // Aplicar opciones de tiempo
         if (options.startTime !== undefined) {
             cmd.seekInput(options.startTime);
         }
@@ -116,12 +107,10 @@ export class HLSSegmentationManager extends EventEmitter {
             cmd.duration(options.duration);
         }
 
-        // Configurar video
         if (options.video) {
             this.applyVideoConfig(cmd, options.video);
         }
 
-        // Configurar audio
         if (options.audio) {
             this.applyAudioConfig(cmd, options.audio);
         } else {
@@ -130,37 +119,43 @@ export class HLSSegmentationManager extends EventEmitter {
                .audioChannels(2);
         }
 
-        // Aplicar resolución
         if (options.resolution) {
             cmd.size(`${options.resolution.width}x${options.resolution.height}`);
         }
 
-        // Aplicar framerate
         if (options.frameRate) {
             cmd.fps(options.frameRate);
         }
 
-        // Configurar HLS
         this.configureHLS(cmd, config, segmentPath);
-
-        // Output
         cmd.output(playlistPath);
 
-        // Eventos de progreso
+        let lastProgressTime = 0;
+
         cmd.on('progress', (progress) => {
+            const now = Date.now();
+            // Throttle: solo emitir si ha pasado suficiente tiempo
+            if (now - lastProgressTime < this.progressThrottle) {
+                return;
+            }
+            lastProgressTime = now;
+
             const progressEvent = this.parseProgress(progress, config, estimatedSegments);
+            
+            // Solo emitir si el porcentaje cambió significativamente (>0.5%)
+            this.lastEmittedPercent = progressEvent.percent;
             this.emit('progress', progressEvent);
+            
         });
 
         cmd.on('start', (command) => {
             this.emit('ffmpeg-start', command);
         });
 
-        // Ejecutar
         try {
             await cmd.run();
 
-            // Emitir fase de finalización
+            // Emitir finalización solo una vez
             this.emit('progress', {
                 type: 'hls-segmentation',
                 percent: 100,
@@ -169,15 +164,13 @@ export class HLSSegmentationManager extends EventEmitter {
                 fps: 0,
                 speed: '1.0x',
                 bitrate: '0kbps',
-                timeProcessed: '00:00:00',
+                timeProcessed: this.formatTime(this.videoDuration),
                 eta: '00:00:00',
                 phase: 'finalizing'
             } as HLSSegmentationProgressEvent);
 
-            // Recopilar resultado
             const result = await this.collectSegmentationResult(config, playlistPath);
 
-            // Emitir evento de completado
             const completeEvent: HLSSegmentationCompleteEvent = {
                 type: 'hls-segmentation',
                 success: true,
@@ -199,40 +192,30 @@ export class HLSSegmentationManager extends EventEmitter {
         }
     }
 
-    /**
-     * Aplica configuración de video
-     */
     private applyVideoConfig(cmd: FFmpegCommand, config: VideoSegmentConfig): void {
         cmd.videoCodec(config.codec);
         cmd.videoBitrate(config.bitrate);
         
         const outputOpts: string[] = [];
-
-        // Preset
         outputOpts.push('-preset', config.preset);
-
-        // Profile y level
         outputOpts.push('-profile:v', config.profile);
+        
         if (config.level) {
             outputOpts.push('-level:v', config.level);
         }
 
-        // GOP size (keyframe interval)
         if (config.gopSize) {
             outputOpts.push('-g', config.gopSize.toString());
         }
 
-        // B-frames
         if (config.bFrames !== undefined) {
             outputOpts.push('-bf', config.bFrames.toString());
         }
 
-        // Pixel format
         if (config.pixelFormat) {
             outputOpts.push('-pix_fmt', config.pixelFormat);
         }
 
-        // Rate control
         if (config.maxBitrate) {
             outputOpts.push('-maxrate', config.maxBitrate);
         }
@@ -241,16 +224,12 @@ export class HLSSegmentationManager extends EventEmitter {
             outputOpts.push('-bufsize', config.bufferSize);
         }
 
-        // Flags para streaming
         outputOpts.push('-movflags', '+faststart');
         outputOpts.push('-sc_threshold', '0');
 
         cmd.outputOptions(outputOpts);
     }
 
-    /**
-     * Aplica configuración de audio
-     */
     private applyAudioConfig(cmd: FFmpegCommand, config: AudioSegmentConfig): void {
         cmd.audioCodec(config.codec);
         cmd.audioBitrate(config.bitrate);
@@ -262,9 +241,6 @@ export class HLSSegmentationManager extends EventEmitter {
         }
     }
 
-    /**
-     * Configura opciones de HLS
-     */
     private configureHLS(
         cmd: FFmpegCommand,
         config: HLSSegmentationConfig,
@@ -278,18 +254,14 @@ export class HLSSegmentationManager extends EventEmitter {
             '-hls_segment_filename', segmentPath
         ];
 
-        // Flags adicionales
         const flags = config.hlsFlags || ['delete_segments'];
         hlsOpts.push('-hls_flags', flags.join('+'));
 
         cmd.outputOptions(hlsOpts);
     }
 
-    // ==================== SEGMENTACIÓN DE AUDIO SEPARADO ====================
+    // ==================== SEGMENTACIÓN DE AUDIO ====================
 
-    /**
-     * Segmenta solo audio (para pistas alternativas)
-     */
     async segmentAudio(
         inputPath: string,
         config: HLSSegmentationConfig,
@@ -297,20 +269,19 @@ export class HLSSegmentationManager extends EventEmitter {
         streamIndex?: number
     ): Promise<SegmentationResult> {
         this.startTime = Date.now();
+        this.lastEmittedPercent = -1;
 
         await fs.ensureDir(config.outputDir);
 
         const playlistPath = path.join(config.outputDir, config.playlistName);
         const segmentPath = path.join(config.outputDir, config.segmentPattern);
 
-        // Obtener duración
         const probeData = await FFmpegCommand.probe(inputPath, {
             ffprobePath: this.ffprobePath
         });
         this.videoDuration = probeData.format.duration || 0;
         const estimatedSegments = Math.ceil(this.videoDuration / config.segmentDuration);
 
-        // Emitir evento de inicio
         const startEvent: HLSSegmentationStartEvent = {
             type: 'hls-segmentation',
             inputPath,
@@ -327,26 +298,30 @@ export class HLSSegmentationManager extends EventEmitter {
 
         cmd.input(inputPath);
 
-        // Seleccionar stream de audio específico
         if (streamIndex !== undefined) {
             cmd.outputOptions(['-map', `0:a:${streamIndex}`]);
         }
 
-        // Sin video
         cmd.noVideo();
-
-        // Configurar audio
         this.applyAudioConfig(cmd, audioConfig);
-
-        // Configurar HLS
         this.configureHLS(cmd, config, segmentPath);
-
         cmd.output(playlistPath);
 
-        // Eventos
+        let lastProgressTime = 0;
+
         cmd.on('progress', (progress) => {
+            const now = Date.now();
+            if (now - lastProgressTime < this.progressThrottle) {
+                return;
+            }
+            lastProgressTime = now;
+
             const progressEvent = this.parseProgress(progress, config, estimatedSegments);
-            this.emit('progress', progressEvent);
+            
+            if (Math.abs(progressEvent.percent - this.lastEmittedPercent) > 0.5) {
+                this.lastEmittedPercent = progressEvent.percent;
+                this.emit('progress', progressEvent);
+            }
         });
 
         try {
@@ -377,9 +352,6 @@ export class HLSSegmentationManager extends EventEmitter {
 
     // ==================== UTILIDADES ====================
 
-    /**
-     * Recopila información del resultado de segmentación
-     */
     private async collectSegmentationResult(
         config: HLSSegmentationConfig,
         playlistPath: string
@@ -411,9 +383,6 @@ export class HLSSegmentationManager extends EventEmitter {
         };
     }
 
-    /**
-     * Parsea segmentos del playlist
-     */
     private parsePlaylistSegments(content: string): HLSSegment[] {
         const segments: HLSSegment[] = [];
         const lines = content.split('\n');
@@ -435,53 +404,63 @@ export class HLSSegmentationManager extends EventEmitter {
     }
 
     /**
-     * Parsea progreso para emitir eventos más informativos
+     * MEJORADO: Parseo más preciso y sin duplicaciones
      */
     private parseProgress(
         progress: any,
         config: HLSSegmentationConfig,
         estimatedSegments: number
     ): HLSSegmentationProgressEvent {
-        const percent = progress.percent || 0;
+        // Usar el porcentaje que ya viene calculado de FFmpegCommand
+        const percent = Math.min(100, Math.max(0, progress.percent || 0));
         const currentSegment = Math.floor((percent / 100) * estimatedSegments);
+        
+        // Calcular velocidad de forma más robusta
+        const fps = progress.currentFps || 0;
+        const speed = fps > 0 ? `${(fps / 30).toFixed(1)}x` : '0.0x';
 
         return {
             type: 'hls-segmentation',
-            percent: Math.min(100, Math.max(0, percent)),
+            percent: Math.round(percent * 100) / 100, // Redondear a 2 decimales
             currentSegment,
             totalSegments: estimatedSegments,
-            fps: progress.currentFps || 0,
-            speed: `${((progress.currentFps || 0) / 30).toFixed(1)}x`,
-            bitrate: `${progress.currentKbps || 0}kbps`,
+            fps,
+            speed,
+            bitrate: `${Math.round(progress.currentKbps || 0)}kbps`,
             timeProcessed: progress.timemark || '00:00:00',
-            eta: this.calculateETA(percent, progress.timemark),
+            eta: this.calculateETA(percent, this.startTime),
             phase: 'segmenting'
         };
     }
 
     /**
-     * Calcula tiempo estimado restante
+     * MEJORADO: Cálculo de ETA basado en tiempo transcurrido real
      */
-    private calculateETA(percent: number, timemark: string): string {
-        if (percent <= 0 || !timemark) return 'unknown';
+    private calculateETA(percent: number, startTime: number): string {
+        if (percent <= 0 || percent >= 100) {
+            return '00:00:00';
+        }
         
-        const parts = timemark.split(':');
-        const seconds = parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseFloat(parts[2]);
-        const totalSeconds = (seconds / percent) * 100;
-        const remaining = totalSeconds - seconds;
+        const elapsed = (Date.now() - startTime) / 1000; // segundos
+        const totalEstimated = (elapsed / percent) * 100;
+        const remaining = Math.max(0, totalEstimated - elapsed);
 
-        const hours = Math.floor(remaining / 3600);
-        const minutes = Math.floor((remaining % 3600) / 60);
-        const secs = Math.floor(remaining % 60);
+        return this.formatTime(remaining);
+    }
 
-        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    /**
+     * Formatea segundos a HH:MM:SS
+     */
+    private formatTime(seconds: number): string {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     }
 
     // ==================== MÉTODOS DE CONVENIENCIA ====================
 
-    /**
-     * Crea configuración de video según calidad
-     */
     static createVideoConfig(
         resolution: Resolution,
         preset: 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium' = 'fast'
@@ -506,9 +485,6 @@ export class HLSSegmentationManager extends EventEmitter {
         };
     }
 
-    /**
-     * Crea configuración de audio según calidad
-     */
     static createAudioConfig(
         quality: 'low' | 'medium' | 'high' = 'medium'
     ): AudioSegmentConfig {
@@ -530,7 +506,7 @@ export class HLSSegmentationManager extends EventEmitter {
     }
 
     /**
-     * Segmenta múltiples calidades con progreso unificado
+     * MEJORADO: Tracking de progreso global sin duplicaciones
      */
     async segmentMultipleQualities(
         inputPath: string,
@@ -547,7 +523,7 @@ export class HLSSegmentationManager extends EventEmitter {
         const audioQuality = options?.audioQuality || 'medium';
         const totalQualities = resolutions.length;
 
-        const tasks = resolutions.map(async (resolution, index) => {
+        const processQuality = async (resolution: Resolution, index: number) => {
             const outputDir = path.join(outputBaseDir, resolution.name);
             
             const config: HLSSegmentationConfig = {
@@ -562,9 +538,11 @@ export class HLSSegmentationManager extends EventEmitter {
 
             this.emit('quality-start', resolution.name, index + 1, totalQualities);
 
-            // Crear un listener temporal para esta calidad
-            const qualityProgressHandler = (progress: HLSSegmentationProgressEvent) => {
-                // Calcular progreso global: cada calidad representa un porcentaje del total
+            // Crear un manager independiente para cada calidad
+            const qualityManager = new HLSSegmentationManager(this.ffmpegPath, this.ffprobePath);
+
+            // Propagar eventos de esta calidad específica
+            qualityManager.on('progress', (progress: HLSSegmentationProgressEvent) => {
                 const qualityBasePercent = (index / totalQualities) * 100;
                 const qualityRangePercent = (1 / totalQualities) * 100;
                 const globalPercent = qualityBasePercent + (progress.percent / 100) * qualityRangePercent;
@@ -574,33 +552,28 @@ export class HLSSegmentationManager extends EventEmitter {
                     qualityIndex: index + 1,
                     totalQualities,
                     qualityPercent: progress.percent,
-                    globalPercent: Math.min(100, globalPercent),
+                    globalPercent: Math.round(globalPercent * 100) / 100,
                     ...progress
                 });
-            };
+            });
 
-            this.on('progress', qualityProgressHandler);
+            const result = await qualityManager.segmentVideo(inputPath, config, {
+                video: videoConfig,
+                audio: audioConfig,
+                resolution
+            });
 
-            try {
-                const result = await this.segmentVideo(inputPath, config, {
-                    video: videoConfig,
-                    audio: audioConfig,
-                    resolution
-                });
+            this.emit('quality-complete', resolution.name, index + 1, totalQualities, result);
 
-                this.emit('quality-complete', resolution.name, index + 1, totalQualities, result);
-
-                return result;
-            } finally {
-                this.removeListener('progress', qualityProgressHandler);
-            }
-        });
+            return result;
+        };
 
         if (options?.parallel) {
+            const tasks = resolutions.map((res, idx) => processQuality(res, idx));
             results.push(...await Promise.all(tasks));
         } else {
-            for (const task of tasks) {
-                results.push(await task);
+            for (let i = 0; i < resolutions.length; i++) {
+                results.push(await processQuality(resolutions[i], i));
             }
         }
 
