@@ -5,7 +5,6 @@ import { MediaMetadataExtractor, MediaMetadata, MediaType, StreamInfo, FormatInf
 import { ResolutionUtils,type AspectRatio,type Resolution } from './utils/ResolutionUtils.js';
 // Import HLS module
 import { 
-  VideoProcessingOrchestrator,
   AudioTrackProcessor,
   SubtitleProcessor,
   HLSSegmentationManager,
@@ -28,7 +27,6 @@ export {
   MediaMetadataExtractor,
   
   // HLS classes
-  VideoProcessingOrchestrator,
   AudioTrackProcessor,
   SubtitleProcessor,
   HLSSegmentationManager,
@@ -73,28 +71,7 @@ export type {
   AspectRatio,
   Resolution
 };
-import { 
-    HLSPlaylistGenerator, 
-    HLSVariantBuilder,
-    HLSAudioTrack,
-    HLSSubtitle,
-    HLSVariant,
-    HLSGeneratorConfig,
-    HLSPlaylistParser,
-    HLSPlaylistValidator,
-    ParsedAudioTrack,
-    ParsedSubtitle,
-} from './m3u8/index';
-export { 
-    HLSPlaylistGenerator, 
-    HLSVariantBuilder,
-    HLSAudioTrack,
-    HLSSubtitle,
-    HLSVariant,
-    HLSGeneratorConfig,
-    HLSPlaylistParser,
-    HLSPlaylistValidator,
-    ParsedAudioTrack,
-    ParsedSubtitle,
-}
+export *  from './m3u8/index';
+
+export *  from './hls/VideoProcessingOrchestrator'
 export { ResolutionUtils };

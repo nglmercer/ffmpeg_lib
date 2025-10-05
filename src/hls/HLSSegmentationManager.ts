@@ -134,7 +134,6 @@ export class HLSSegmentationManager extends EventEmitter {
 
         cmd.on('progress', (progress) => {
             const now = Date.now();
-            // Throttle: solo emitir si ha pasado suficiente tiempo
             if (now - lastProgressTime < this.progressThrottle) {
                 return;
             }
@@ -142,10 +141,10 @@ export class HLSSegmentationManager extends EventEmitter {
 
             const progressEvent = this.parseProgress(progress, config, estimatedSegments);
             
-            // Solo emitir si el porcentaje cambió significativamente (>0.5%)
-            this.lastEmittedPercent = progressEvent.percent;
-            this.emit('progress', progressEvent);
-            
+            if (Math.abs(progressEvent.percent - this.lastEmittedPercent) > 0.5) {
+                this.lastEmittedPercent = progressEvent.percent;
+                this.emit('progress', progressEvent);
+            }
         });
 
         cmd.on('start', (command) => {
@@ -437,15 +436,14 @@ export class HLSSegmentationManager extends EventEmitter {
      * MEJORADO: Cálculo de ETA basado en tiempo transcurrido real
      */
     private calculateETA(percent: number, startTime: number): string {
-        if (percent <= 0 || percent >= 100) {
-            return '00:00:00';
-        }
+        if (percent <= 0) return '99:99:99';
+        if (percent >= 100) return '00:00:00';
         
-        const elapsed = (Date.now() - startTime) / 1000; // segundos
-        const totalEstimated = (elapsed / percent) * 100;
-        const remaining = Math.max(0, totalEstimated - elapsed);
-
-        return this.formatTime(remaining);
+        const elapsed = (Date.now() - startTime) / 1000;
+        const rate = percent / elapsed; // % por segundo
+        const remaining = (100 - percent) / rate;
+        
+        return this.formatTime(Math.round(remaining));
     }
 
     /**

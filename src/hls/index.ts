@@ -1,9 +1,7 @@
 // HLS Module - Re-export all HLS-related classes and interfaces
 
 // Main HLS classes
-export { 
-  VideoProcessingOrchestrator 
-} from './VideoProcessingOrchestrator.js';
+
 
 export { 
   AudioTrackProcessor,

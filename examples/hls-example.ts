@@ -3,68 +3,19 @@ import fs from 'fs-extra';
 import { FFmpegManager } from '../src/FFmpegManager';
 import { TestMediaGenerator } from '../src/TestMediaGenerator';
 import { MediaMetadataExtractor } from '../src/MediaMetadataExtractor';
-import { VideoProcessingOrchestrator } from '../src/hls/VideoProcessingOrchestrator';
 import { ProcessingConfig} from '../src/hls/types';
 import { AudioTrackProcessor, createDefaultAudioConfig } from '../src/hls/AudioTrackProcessor';
 import { SubtitleProcessor, createDefaultSubtitleConfig } from '../src/hls/SubtitleProcessor';
+import { VideoProcessingOrchestrator, createDefaultOrchestratorConfig, ResolutionUtils } from '../src/index';
 
 // ==================== INTERFACES ====================
 
-interface ProcessingResults {
-  timestamp: string;
-  inputVideo: {
-    path: string;
-    size: number;
-    duration: string;
-  };
-  hlsOutput: {
-    masterPlaylist: string;
-    videoVariants: Array<{
-      name: string;
-      resolution: string;
-      segmentCount: number;
-      size: number;
-    }>;
-    audioTracks: Array<{
-      language: string;
-      size: number;
-    }>;
-    subtitles: Array<{
-      language: string;
-      format: string;
-    }>;
-  };
-  processing: {
-    duration: number;
-    compressionRatio: number;
-  };
-  errors: string[];
-}
+
 
 // ==================== FUNCIÓN PRINCIPAL ====================
 
 async function processVideoToHLS() {
   console.log('🎬 Iniciando procesamiento de video a HLS...\n');
-  
-  const results: ProcessingResults = {
-    timestamp: new Date().toISOString(),
-    inputVideo: {
-      path: '',
-      size: 0,
-      duration: ''
-    },
-    hlsOutput: {
-      masterPlaylist: '',
-      videoVariants: [],
-      audioTracks: [],
-      subtitles: []
-    },
-    processing: {
-      duration: 0,
-      compressionRatio: 0
-    },
-    errors: []
-  };
 
   try {
     // ==================== PASO 1: CONFIGURAR FFMPEG ====================
@@ -90,11 +41,6 @@ async function processVideoToHLS() {
       frequency: 440     // Tono A4 para el audio
     });
     
-    results.inputVideo = {
-      path: testVideo.path,
-      size: testVideo.size,
-      duration: '30s'
-    };
     console.log(`   ✅ Video generado: ${testVideo.path}`);
     console.log(`   📊 Tamaño: ${Math.round(testVideo.size / 1024 / 1024)}MB\n`);
 
@@ -112,61 +58,30 @@ async function processVideoToHLS() {
     console.log('⚙️ Paso 4: Configurando procesamiento HLS...');
     const outputDir = path.join(process.cwd(), 'hls-output');
     await fs.ensureDir(outputDir);
-
-    const config: ProcessingConfig = {
-      outputBaseDir: outputDir,
-      qualityPreset: 'medium',
-      targetResolutions: ['1080p', '720p', '480p', '360p'],
-      videoPreset: 'fast',
-      audioQuality: 'medium',
-      segmentDuration: 6,
-      parallel: false,              // Procesar secuencialmente para ver progreso
-      extractAudioTracks: true,
-      extractSubtitles: false,      // El video de prueba no tiene subtítulos
-      cleanupTemp: true,
-      keepOriginal: true
-    };
+    const resolutions = ResolutionUtils.generateLowerResolutions(1280, 720).slice(0, 1);
+    const config = createDefaultOrchestratorConfig(testVideo.path,outputDir,resolutions);
 
     console.log(`   📁 Salida: ${outputDir}`);
-    console.log(`   🎯 Calidades: ${config.targetResolutions?.join(', ')}\n`);
+    console.log(`   🎯 Calidades:`,resolutions);
 
     // ==================== PASO 5: PROCESAR VIDEO ====================
     console.log('🚀 Paso 5: Procesando video a HLS...');
     console.log('   (Esto puede tomar varios minutos...)\n');
     
-    const orchestrator = new VideoProcessingOrchestrator();
+    const orchestrator = new VideoProcessingOrchestrator(ffmpegPath, ffprobePath);
     
     // Escuchar eventos de progreso (solo hitos importantes)
     orchestrator.on('progress', (progress) => {
       console.log(progress);
     });
     const startTime = Date.now();
-    const result = await orchestrator.processVideo(testVideo.path, config);
+    const result = await orchestrator.process(config);
     const processingTime = (Date.now() - startTime) / 1000;
 
-    console.log('\n   ✅ Procesamiento completado!\n');
+    console.log('\n   ✅ Procesamiento completado!\n',result);
 
-    // ==================== PASO 6: RECOPILAR RESULTADOS ====================
-    console.log('📋 Paso 6: Recopilando resultados...');
-    
-    results.hlsOutput.masterPlaylist = result.masterPlaylist;
-    results.hlsOutput.videoVariants = result.variants.map(v => ({
-      name: v.name,
-      resolution: v.resolution,
-      segmentCount: v.segmentCount,
-      size: v.size
-    }));
-    results.hlsOutput.audioTracks = result.audioTracks.map(a => ({
-      language: a.language,
-      size: a.size
-    }));
-    results.processing.duration = processingTime;
-    results.processing.compressionRatio = result.metadata.compressionRatio;
 
-    console.log(`   ✅ Master playlist: ${path.basename(result.masterPlaylist)}`);
-    console.log(`   ✅ Variantes generadas: ${result.variants.length}`);
-    console.log(`   ✅ Tiempo de procesamiento: ${processingTime.toFixed(2)}s`);
-    console.log(`   ✅ Ratio de compresión: ${result.metadata.compressionRatio.toFixed(2)}x\n`);
+
 
     // ==================== PASO 7: PROCESAR AUDIO ADICIONAL ====================
     console.log('🔊 Paso 7: Ejemplo de procesamiento de audio...');
@@ -191,42 +106,34 @@ async function processVideoToHLS() {
     
     // ==================== PASO 9: VERIFICAR ESTRUCTURA DE SALIDA ====================
     console.log('📂 Paso 9: Estructura de archivos generados...');
-    const videoIdDir = path.dirname(result.masterPlaylist);
+    const videoIdDir = path.dirname(result.video?.masterPlaylistPath || '');
     
     console.log(`   ${videoIdDir}/`);
     console.log(`   ├── master.m3u8           (Playlist principal)`);
     console.log(`   ├── video/                (Segmentos de video)`);
     
-    for (const variant of result.variants) {
+    for (const variant of result.video?.qualities || []) {
       const segmentFiles = await fs.readdir(path.join(videoIdDir, 'video'));
-      const variantSegments = segmentFiles.filter(f => f.startsWith(variant.name));
-      console.log(`   │   ├── quality_${variant.name}.m3u8`);
-      console.log(`   │   └── ${variant.name}_segment_*.ts (${variantSegments.length} segmentos)`);
+      const variantSegments = segmentFiles.filter(f => f.startsWith(variant.playlistPath));
+      console.log(`   │   ├── ${path.basename(variant.playlistPath)}`);
+      console.log(`   │   └── ${path.basename(variantSegments[0])} (${variantSegments.length} segmentos)`);
     }
     
-    if (result.audioTracks.length > 0) {
+    if (result.audio?.tracks && result.audio.tracks.length > 0) {
       console.log(`   ├── audio/                (Pistas de audio alternativas)`);
-      for (const audio of result.audioTracks) {
-        console.log(`   │   └── audio_${audio.language}.m3u8`);
+      for (const audio of result.audio?.tracks || []) {
+        console.log(audio.hlsPlaylistPath);
       }
     }
     const resultsPath = path.join(outputDir, 'processing-results.json');
-    await fs.writeJSON(resultsPath, results, { spaces: 2 });
+    await fs.writeJSON(resultsPath, result, { spaces: 2 });
     console.log(`   ✅ Resultados guardados: ${resultsPath}\n`);
 
     // ==================== RESUMEN FINAL ====================
     console.log(`📁 Salida HLS: ${videoIdDir}`);
-    console.log(`🎬 Master Playlist: ${path.basename(result.masterPlaylist)}`);
-    console.log(`📊 Variantes: ${result.variants.length}`);
-    console.log(`⏱️ Tiempo: ${processingTime.toFixed(2)}s`);
-    console.log(`💾 Tamaño original: ${Math.round(testVideo.size / 1024 / 1024)}MB`);
-    console.log(`💾 Tamaño procesado: ${Math.round(result.metadata.processedSize / 1024 / 1024)}MB`);
-    console.log(`📉 Compresión: ${result.metadata.compressionRatio.toFixed(2)}x`);
-
 
   } catch (error) {
     console.error('\n❌ Error durante el procesamiento:', error);
-    results.errors.push((error as Error).message);
     throw error;
   }
 }
@@ -257,22 +164,16 @@ async function customVideoProcessing() {
     // Procesamiento con configuración personalizada
     const outputDir = path.join(process.cwd(), 'custom-output');
     
-    const customConfig: ProcessingConfig = {
-      outputBaseDir: outputDir,
-      targetResolutions: ['720p', '480p'],  // Solo 2 calidades
-      videoPreset: 'ultrafast',              // Más rápido
-      audioQuality: 'low',                   // Audio de menor calidad
-      segmentDuration: 4,                    // Segmentos más cortos
-      parallel: true,                        // Procesar en paralelo
-      extractAudioTracks: false,
-      extractSubtitles: false
-    };
+    const customConfig = createDefaultOrchestratorConfig(
+      video.path,
+      outputDir,
+      ResolutionUtils.generateLowerResolutions(1280, 720).slice(0, 1)
+    );
 
-    const orchestrator = new VideoProcessingOrchestrator();
-    const result = await orchestrator.processVideo(video.path, customConfig);
+    const orchestrator = new VideoProcessingOrchestrator(ffmpegPath, ffprobePath);
+    const result = await orchestrator.process(customConfig);
 
-    console.log(`\n✅ Procesamiento personalizado completado`);
-    console.log(`📁 Salida: ${result.masterPlaylist}\n`);
+    console.log(`\n✅ Procesamiento personalizado completado`,result);
 
   } catch (error) {
     console.error('❌ Error:', error);

@@ -377,9 +377,14 @@ describe('HLSSegmentationManager Tests', () => {
 
             const globalProgress: number[] = [];
 
+            let lastQuality = '';
+            let qualityProgress: Record<string, number[]> = {};
+            
             manager.on('quality-progress', (data) => {
-                console.log('Quality Progress:', data);
-                globalProgress.push(data.globalPercent);
+                if (!qualityProgress[data.quality]) {
+                    qualityProgress[data.quality] = [];
+                }
+                qualityProgress[data.quality].push(data.qualityPercent);
             });
 
             await manager.segmentMultipleQualities(
@@ -393,11 +398,9 @@ describe('HLSSegmentationManager Tests', () => {
             expect(globalProgress.length).toBeGreaterThan(0);
             
             if (globalProgress.length > 1) {
-                let increasing = true;
-                for (let i = 1; i < globalProgress.length; i++) {
-                    if (globalProgress[i] < globalProgress[i - 1]) {
-                        increasing = false;
-                        break;
+                for (const [quality, values] of Object.entries(qualityProgress)) {
+                    for (let i = 1; i < values.length; i++) {
+                        expect(values[i]).toBeGreaterThanOrEqual(values[i - 1]);
                     }
                 }
                 // Note: Progress might reset between qualities, so we don't strictly require monotonic increase

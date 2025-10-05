@@ -1,880 +1,616 @@
-// VideoProcessingOrchestrator.ts - Con TypedVideoEventEmitter integrado
-
-import path from 'path';
-import fs from 'fs-extra';
-import { MediaMetadataExtractor, MediaMetadata, MediaType } from '../MediaMetadataExtractor';
-import { ResolutionUtils, Resolution } from '../utils/ResolutionUtils';
+import { EventEmitter } from 'events';
 import { HLSSegmentationManager } from './HLSSegmentationManager';
-import {HLSPlaylistGenerator,HLSSubtitle,HLSVariantBuilder,HLSVariant,HLSAudioTrack}from '../m3u8/index'
+import { AudioTrackProcessor } from './AudioTrackProcessor';
+import { SubtitleProcessor } from './SubtitleProcessor';
+import type { Resolution } from '../utils/ResolutionUtils';
+import type {
+    ProcessedAudioTrack,
+    AudioProcessingConfig
+} from './types';
+import type {
+    ProcessedSubtitle,
+    SubtitleProcessorConfig
+} from './SubtitleProcessor';
+import type {
+    SegmentationResult
+} from './types';
+import fs from 'fs-extra';
+import path from 'path';
 
-import { FFmpegManager } from '../FFmpegManager';
-import { SubtitleProcessor, createDefaultSubtitleConfig } from './SubtitleProcessor';
+// ==================== INTERFACES ====================
 
-// ⭐ IMPORTAR SISTEMA DE EVENTOS TIPADOS
-import {
-    TypedVideoEventEmitter,
-    VideoProcessingEvent,
-    ProcessingPhase,
-    ProcessingProgressTracker,
-    EventLogger,
-    // Tipos de eventos
-    ProcessingStartedEvent,
-    ProcessingCompletedEvent,
-    VariantStartedEvent,
-    VariantProgressEvent,
-    VariantCompletedEvent
-} from './EventTypes';
-import type{
-    ProcessingConfig,
-    ProcessingPlan,
-    ProcessingResult,
-    ProcessingError,
-    VariantResult,
-    AudioTrackResult,
-    SubtitleResult,
-    SubtitleInfo,
-    AudioTrackInfo,
-} from './types'
+/**
+ * Configuración completa del orquestador
+ */
+export interface OrchestratorConfig {
+    inputPath: string;
+    outputBaseDir: string;
+    
+    // Configuración de video
+    video: {
+        enabled: boolean;
+        resolutions: Resolution[];
+        preset?: 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium';
+        segmentDuration?: number;
+        parallel?: boolean;
+    };
+    
+    // Configuración de audio
+    audio: {
+        enabled: boolean;
+        extractAll?: boolean;
+        languages?: string[];
+        quality?: 'low' | 'medium' | 'high';
+        generateHLS?: boolean;
+    };
+    
+    // Configuración de subtítulos
+    subtitles: {
+        enabled: boolean;
+        extractEmbedded?: boolean;
+        externalFiles?: Array<{
+            path: string;
+            language: string;
+        }>;
+        languages?: string[];
+        generateWebVTT?: boolean;
+    };
+}
 
+/**
+ * Resultado del procesamiento completo
+ */
+export interface OrchestratorResult {
+    success: boolean;
+    
+    // Resultados de video
+    video?: {
+        qualities: SegmentationResult[];
+        masterPlaylistPath?: string;
+    };
+    
+    // Resultados de audio
+    audio?: {
+        tracks: ProcessedAudioTrack[];
+        defaultTrack?: ProcessedAudioTrack;
+    };
+    
+    // Resultados de subtítulos
+    subtitles?: {
+        tracks: ProcessedSubtitle[];
+        defaultTrack?: ProcessedSubtitle;
+    };
+    
+    // Metadata
+    metadata: {
+        totalSize: number;
+        totalProcessingTime: number;
+        startTime: Date;
+        endTime: Date;
+    };
+    
+    errors: OrchestratorError[];
+}
 
-export class VideoProcessingOrchestrator extends TypedVideoEventEmitter {
-    private ffmpegManager: FFmpegManager;
-    private metadataExtractor: MediaMetadataExtractor;
+/**
+ * Error del orquestador
+ */
+export interface OrchestratorError {
+    phase: 'video' | 'audio' | 'subtitles' | 'general';
+    message: string;
+    timestamp: Date;
+    critical: boolean;
+}
+
+/**
+ * Progreso global del orquestador
+ */
+export interface OrchestratorProgress {
+    phase: 'video' | 'audio' | 'subtitles' | 'finalizing';
+    phasePercent: number;
+    globalPercent: number;
+    currentItem?: string;
+    totalItems?: number;
+    eta?: string;
+}
+
+// ==================== CLASE PRINCIPAL ====================
+
+export class VideoProcessingOrchestrator extends EventEmitter {
+    private ffmpegPath: string;
+    private ffprobePath: string;
+    
     private segmentationManager: HLSSegmentationManager;
-    private playlistGenerator: HLSPlaylistGenerator;
+    private audioProcessor: AudioTrackProcessor;
     private subtitleProcessor: SubtitleProcessor;
     
-    // ⭐ Progress tracker integrado
-    private progressTracker?: ProcessingProgressTracker;
-    private eventLogger?: EventLogger;
+    private startTime: number = 0;
+    private phaseWeights = {
+        video: 0.70,    // 70% del tiempo
+        audio: 0.20,    // 20% del tiempo
+        subtitles: 0.10 // 10% del tiempo
+    };
 
-    constructor(dir?: string, options?: { enableLogger?: boolean }) {
+    constructor(ffmpegPath: string, ffprobePath: string) {
         super();
+        this.ffmpegPath = ffmpegPath;
+        this.ffprobePath = ffprobePath;
         
-        this.ffmpegManager = new FFmpegManager(dir);
-        const ffmpegPath = this.ffmpegManager.getFFmpegPath();
-        const ffprobePath = this.ffmpegManager.getFFprobePath();
-        
-        this.metadataExtractor = new MediaMetadataExtractor(ffprobePath);
         this.segmentationManager = new HLSSegmentationManager(ffmpegPath, ffprobePath);
-        this.playlistGenerator = new HLSPlaylistGenerator();
+        this.audioProcessor = new AudioTrackProcessor(ffmpegPath, ffprobePath);
         this.subtitleProcessor = new SubtitleProcessor(ffmpegPath, ffprobePath);
         
-        // Habilitar logger opcional
-        if (options?.enableLogger) {
-            this.eventLogger = new EventLogger(this);
-        }
+        this.setupEventForwarding();
     }
+
+    // ==================== PROCESAMIENTO PRINCIPAL ====================
+
     /**
-     * Procesa un video completo con eventos tipados
+     * Procesa video completo con todas las opciones
      */
-    async processVideo(
-        inputPath: string,
-        config: ProcessingConfig
-    ): Promise<ProcessingResult> {
-        const startTime = Date.now();
-        const videoId = this.generateVideoId();
-        const processId = videoId;
-        const errors: ProcessingError[] = [];
-
-        // Inicializar progress tracker
-        this.progressTracker = new ProcessingProgressTracker(processId);
-
-        try {
-            // ==================== FASE 1: ANÁLISIS ====================
-            this.emitPhaseStart(processId, ProcessingPhase.ANALYZING);
-            
-            const metadata = await this.analyzeVideo(inputPath);
-            
-            if (metadata.mediaType !== MediaType.VIDEO) {
-                throw new Error('Input file is not a valid video');
-            }
-
-            this.emit(VideoProcessingEvent.ANALYSIS_COMPLETED, {
-                processId,
-                timestamp: new Date(),
-                phase: ProcessingPhase.ANALYZING,
-                metadata
-            });
-
-            // ==================== FASE 2: PLANIFICACIÓN ====================
-            this.emitPhaseStart(processId, ProcessingPhase.PLANNING);
-            
-            const plan = await this.createProcessingPlan(inputPath, metadata, config);
-            
-            this.emit(VideoProcessingEvent.PLANNING_COMPLETED, {
-                processId,
-                timestamp: new Date(),
-                phase: ProcessingPhase.PLANNING,
-                plan
-            });
-
-            // ==================== FASE 3: PREPARAR DIRECTORIOS ====================
-            const outputDir = path.join(config.outputBaseDir, videoId);
-            await this.setupDirectories(outputDir);
-
-            // ==================== FASE 4: PROCESAR SUBTÍTULOS ====================
-            let subtitleResults: SubtitleResult[] = [];
-            if (config.extractSubtitles || plan.subtitles.length > 0) {
-                this.emitPhaseStart(processId, ProcessingPhase.PROCESSING_SUBTITLES);
-                
-                subtitleResults = await this.processSubtitles(
-                    inputPath,
-                    outputDir,
-                    plan.subtitles,
-                    processId,
-                    errors
-                );
-                
-                this.emitPhaseComplete(processId, ProcessingPhase.PROCESSING_SUBTITLES);
-            }
-
-            // ==================== FASE 5: PROCESAR VARIANTES DE VIDEO ====================
-            this.emitPhaseStart(processId, ProcessingPhase.PROCESSING_VIDEO);
-            
-            const variantResults = await this.processVideoVariants(
-                inputPath,
-                outputDir,
-                plan,
-                config,
-                processId,
-                errors
-            );
-            
-            this.emitPhaseComplete(processId, ProcessingPhase.PROCESSING_VIDEO);
-
-            // ==================== FASE 6: PROCESAR AUDIO ====================
-            let audioResults: AudioTrackResult[] = [];
-            if (config.extractAudioTracks && plan.audioTracks.length > 1) {
-                this.emitPhaseStart(processId, ProcessingPhase.PROCESSING_AUDIO);
-                
-                audioResults = await this.processAudioTracks(
-                    inputPath,
-                    outputDir,
-                    plan.audioTracks,
-                    metadata.duration,
-                    processId,
-                    errors
-                );
-                
-                this.emitPhaseComplete(processId, ProcessingPhase.PROCESSING_AUDIO);
-            }
-
-            // ==================== FASE 7: GENERAR PLAYLISTS ====================
-            this.emitPhaseStart(processId, ProcessingPhase.GENERATING_PLAYLISTS);
-            
-            let hlsSubtitles: HLSSubtitle[] = [];
-            if (subtitleResults.length > 0) {
-                const subtitleDir = path.join(outputDir, 'subtitles');
-                hlsSubtitles = await this.generateSubtitlePlaylists(
-                    subtitleResults,
-                    plan.subtitles,
-                    subtitleDir,
-                    metadata.duration
-                );
-            }
-
-            const masterPlaylistPath = await this.generateMasterPlaylist(
-                outputDir,
-                plan.variants,
-                audioResults.length > 0 ? this.convertToHLSAudioTracks(audioResults, plan.audioTracks) : undefined,
-                hlsSubtitles.length > 0 ? hlsSubtitles : undefined
-            );
-            
-            this.emitPhaseComplete(processId, ProcessingPhase.GENERATING_PLAYLISTS);
-
-            // ==================== FASE 8: CLEANUP ====================
-            if (config.cleanupTemp) {
-                this.emitPhaseStart(processId, ProcessingPhase.CLEANUP);
-                await this.cleanup(config.tempDir);
-                this.emitPhaseComplete(processId, ProcessingPhase.CLEANUP);
-            }
-
-            // ==================== COMPLETADO ====================
-            const processedSize = await this.calculateTotalSize(outputDir);
-            const processingTime = (Date.now() - startTime) / 1000;
-
-            this.emit(VideoProcessingEvent.PROCESSING_COMPLETED, {
-                processId,
-                timestamp: new Date(),
-                phase: ProcessingPhase.COMPLETE,
-                videoId,
-                totalDuration: processingTime,
-                variantsProcessed: variantResults.length,
-                audioTracksProcessed: audioResults.length,
-                subtitlesProcessed: subtitleResults.length,
-                totalSize: processedSize,
-                masterPlaylistPath
-            } as ProcessingCompletedEvent);
-
-            return {
-                success: errors.length === 0,
-                videoId,
-                masterPlaylist: masterPlaylistPath,
-                variants: variantResults,
-                audioTracks: audioResults,
-                subtitles: subtitleResults,
-                metadata: {
-                    originalFile: inputPath,
-                    duration: metadata.duration,
-                    originalSize: metadata.fileSize,
-                    processedSize,
-                    compressionRatio: metadata.fileSize / processedSize,
-                    processingTime
-                },
-                errors
-            };
-
-        } catch (error: any) {
-            this.emit(VideoProcessingEvent.PROCESSING_FAILED, {
-                processId,
-                timestamp: new Date(),
-                phase: this.progressTracker?.getStatus().phase || ProcessingPhase.ANALYZING,
-                stage: 'orchestration',
-                error,
-                details: { videoId, inputPath }
-            });
-
-            throw error;
+    async process(config: OrchestratorConfig): Promise<OrchestratorResult> {
+        this.startTime = Date.now();
+        const errors: OrchestratorError[] = [];
+        
+        // Validar input
+        if (!await fs.pathExists(config.inputPath)) {
+            throw new Error(`Input file not found: ${config.inputPath}`);
         }
-    }
-    private emitPhaseStart(processId: string, phase: ProcessingPhase): void {
-        this.progressTracker?.updatePhase(phase, 0);
-        
-        this.emit(VideoProcessingEvent.PHASE_STARTED, {
-            processId,
-            timestamp: new Date(),
-            phase
+
+        await fs.ensureDir(config.outputBaseDir);
+
+        this.emit('start', {
+            config,
+            timestamp: new Date()
         });
+
+        const result: OrchestratorResult = {
+            success: true,
+            metadata: {
+                totalSize: 0,
+                totalProcessingTime: 0,
+                startTime: new Date(),
+                endTime: new Date()
+            },
+            errors: []
+        };
+
+        // Fase 1: Procesar video
+        if (config.video.enabled) {
+            try {
+                result.video = await this.processVideo(config);
+            } catch (error: any) {
+                errors.push({
+                    phase: 'video',
+                    message: error.message,
+                    timestamp: new Date(),
+                    critical: true
+                });
+                result.success = false;
+            }
+        }
+
+        // Fase 2: Procesar audio
+        if (config.audio.enabled) {
+            try {
+                result.audio = await this.processAudio(config);
+            } catch (error: any) {
+                errors.push({
+                    phase: 'audio',
+                    message: error.message,
+                    timestamp: new Date(),
+                    critical: false
+                });
+            }
+        }
+
+        // Fase 3: Procesar subtítulos
+        if (config.subtitles.enabled) {
+            try {
+                result.subtitles = await this.processSubtitles(config);
+            } catch (error: any) {
+                errors.push({
+                    phase: 'subtitles',
+                    message: error.message,
+                    timestamp: new Date(),
+                    critical: false
+                });
+            }
+        }
+
+        // Fase 4: Generar master playlist
+        if (result.video && result.audio) {
+            try {
+                result.video.masterPlaylistPath = await this.generateMasterPlaylist(
+                    config,
+                    result
+                );
+            } catch (error: any) {
+                errors.push({
+                    phase: 'general',
+                    message: `Master playlist generation failed: ${error.message}`,
+                    timestamp: new Date(),
+                    critical: false
+                });
+            }
+        }
+
+        // Calcular metadata final
+        result.metadata.endTime = new Date();
+        result.metadata.totalProcessingTime = Date.now() - this.startTime;
+        result.metadata.totalSize = await this.calculateTotalSize(config.outputBaseDir);
+        result.errors = errors;
+
+        this.emit('complete', result);
+
+        return result;
     }
 
-    private emitPhaseComplete(processId: string, phase: ProcessingPhase): void {
-        this.progressTracker?.updatePhase(phase, 100);
-        
-        this.emit(VideoProcessingEvent.PHASE_COMPLETED, {
-            processId,
-            timestamp: new Date(),
-            phase
-        });
-    }
+    // ==================== PROCESAMIENTO POR FASE ====================
 
-    private emitVariantProgress(
-        processId: string,
-        variantName: string,
-        percent: number,
-        progressInfo?: any
-    ): void {
-        this.progressTracker?.updateVariant(variantName, percent);
-        
-        this.emit(VideoProcessingEvent.VARIANT_PROGRESS, {
-            processId,
-            timestamp: new Date(),
-            phase: ProcessingPhase.PROCESSING_VIDEO,
-            variantName,
-            percent,
-            fps: progressInfo?.currentFps,
-            speed: progressInfo?.speed,
-            bitrate: progressInfo?.bitrate,
-            timeProcessed: progressInfo?.timemark,
-            eta: progressInfo?.eta
-        } as VariantProgressEvent);
-    }
-        /**
-     * Obtiene el estado actual del progreso
-     */
-    getProgressStatus() {
-        return this.progressTracker?.getStatus();
-    }
     /**
-     * Analiza el video de entrada
+     * Procesa video en múltiples calidades
      */
-    private async analyzeVideo(inputPath: string): Promise<MediaMetadata> {
-        if (!await fs.pathExists(inputPath)) {
-            throw new Error(`Input file not found: ${inputPath}`);
-        }
-        return await this.metadataExtractor.extractMetadata(inputPath);
+    private async processVideo(
+        config: OrchestratorConfig
+    ): Promise<{ qualities: SegmentationResult[]; masterPlaylistPath?: string }> {
+        this.emit('phase-start', 'video', config.video.resolutions.length);
+
+        const videoDir = path.join(config.outputBaseDir, 'video');
+        await fs.ensureDir(videoDir);
+
+        const qualities = await this.segmentationManager.segmentMultipleQualities(
+            config.inputPath,
+            videoDir,
+            config.video.resolutions,
+            {
+                preset: config.video.preset || 'fast',
+                audioQuality: config.audio.quality || 'medium',
+                parallel: config.video.parallel || false
+            }
+        );
+
+        this.emit('phase-complete', 'video', qualities.length);
+
+        return { qualities };
     }
 
+    /**
+     * Procesa pistas de audio
+     */
+    private async processAudio(
+        config: OrchestratorConfig
+    ): Promise<{ tracks: ProcessedAudioTrack[]; defaultTrack?: ProcessedAudioTrack }> {
+        this.emit('phase-start', 'audio');
 
-    // ==================== PLANIFICACIÓN ====================
+        const audioDir = path.join(config.outputBaseDir, 'audio');
+        await fs.ensureDir(audioDir);
 
-    private async createProcessingPlan(
-        inputPath: string,
-        metadata: MediaMetadata,
-        config: ProcessingConfig
-    ): Promise<ProcessingPlan> {
-        const primaryVideo = metadata.primaryVideo;
-        if (!primaryVideo) {
-            throw new Error('No video stream found');
-        }
+        const audioConfig: AudioProcessingConfig = {
+            outputDir: audioDir,
+            extractAll: config.audio.extractAll || false,
+            languages: config.audio.languages,
+            targetCodec: 'aac',
+            targetBitrate: this.getAudioBitrate(config.audio.quality),
+            targetSampleRate: 48000,
+            targetChannels: 2,
+            generateHLS: config.audio.generateHLS !== false,
+            segmentDuration: config.video.segmentDuration || 6
+        };
 
-        const targetResolutions = this.determineTargetResolutions(
-            primaryVideo.width,
-            primaryVideo.height,
-            config
+        const result = await this.audioProcessor.processAudioTracks(
+            config.inputPath,
+            audioConfig
         );
 
-        const variants = this.createHLSVariants(targetResolutions, config);
-        const audioTracks = this.detectAudioTracks(metadata);
-        const subtitles = this.detectSubtitles(metadata);
-
-        const estimatedDuration = this.estimateProcessingDuration(
-            metadata.duration,
-            targetResolutions.length,
-            config.parallel || false
-        );
-
-        const estimatedSize = this.estimateProcessedSize(
-            metadata.fileSize,
-            targetResolutions.length
-        );
+        this.emit('phase-complete', 'audio', result.tracks.length);
 
         return {
-            inputFile: inputPath,
-            metadata,
-            targetResolutions,
-            variants,
-            audioTracks,
-            subtitles,
-            estimatedDuration,
-            estimatedSize
+            tracks: result.tracks,
+            defaultTrack: result.defaultTrack
         };
     }
-    /**
-     * Determina las resoluciones objetivo
-     */
-    private determineTargetResolutions(
-        originalWidth: number,
-        originalHeight: number,
-        config: ProcessingConfig
-    ): Resolution[] {
-        if (config.targetResolutions && config.targetResolutions.length > 0) {
-            const allResolutions = ResolutionUtils.generateLowerResolutions(
-                originalWidth,
-                originalHeight,
-                {
-                    minWidth: config.minResolution?.width,
-                    minHeight: config.minResolution?.height
-                }
-            );
-            return allResolutions.filter(r => 
-                config.targetResolutions!.includes(r.name)
-            );
-        }
-        return ResolutionUtils.generateAdaptiveResolutions(
-            originalWidth,
-            originalHeight,
-            {
-                qualityPreset: config.qualityPreset || 'medium',
-                minWidth: config.minResolution?.width,
-                minHeight: config.minResolution?.height
-            }
-        );
-    }
 
     /**
-     * Crea variantes HLS
-     */
-    private createHLSVariants(resolutions: Resolution[], config: ProcessingConfig): HLSVariant[] {
-        const builder = new HLSVariantBuilder();
-        const audioQuality = config.audioQuality || 'medium';
-        const audioBitrate = audioQuality === 'high' ? '192k' : audioQuality === 'low' ? '64k' : '128k';
-
-        for (const resolution of resolutions) {
-            builder.addVariant(
-                resolution.name,
-                resolution.width,
-                resolution.height,
-                resolution.bitrate,
-                audioBitrate,
-                {
-                    frameRate: 30,
-                    audioGroup: 'audio',
-                    subtitleGroup: 'subs'
-                }
-            );
-        }   
-        return builder.build();
-    }
-
-    /**
-     * Detects and maps detailed audio track information from media metadata.
-     */
-    private detectAudioTracks(metadata: MediaMetadata): AudioTrackInfo[] {
-        let audioStreamIndex = 0;
-        return metadata.audioStreams.map((stream) => {
-            const language = stream.language || 'und';
-            return {
-                index: stream.index,
-                streamIndex: audioStreamIndex++,
-                codec: stream.codecType,
-                codecLongName: stream.codecLongName || stream.codecName,
-                profile: stream.profile,
-                sampleRate: stream.sampleRate || 48000,
-                channels: stream.channels || 2,
-                channelLayout: stream.channelLayout || 'stereo',
-                bitrate: stream.bitrate,
-                language: language,
-                languageName: this.getLanguageName(language),
-                title: stream.tags?.title,
-                isDefault: stream.disposition?.default === 1,
-                tags: stream.tags,
-            };
-        });
-    }
-
-    /**
-     * Detecta subtítulos
-     */
-    private detectSubtitles(metadata: MediaMetadata): SubtitleInfo[] {
-        return metadata.subtitleStreams.map((stream, index) => ({
-            index: stream.index,
-            language: stream.language || 'und',
-            name: stream.language ? this.getLanguageName(stream.language) : `Subtitle ${index + 1}`,
-            codec: stream.codecName,
-            isDefault: index === 0,
-            isForced: false
-        }));
-    }
-
-    // ==================== PROCESAMIENTO DE VARIANTES ====================
-
-    /**
-     * Procesa todas las variantes de video
-     */
-    private async processVideoVariants(
-        inputPath: string,
-        outputDir: string,
-        plan: ProcessingPlan,
-        config: ProcessingConfig,
-        processId: string,
-        errors: ProcessingError[]
-    ): Promise<VariantResult[]> {
-        const results: VariantResult[] = [];
-        const videoDir = path.join(outputDir, 'video');
-        
-        const processTasks = plan.targetResolutions.map(async (resolution, index) => {
-            try {
-                // Emitir evento de inicio de variante
-                this.emit(VideoProcessingEvent.VARIANT_STARTED, {
-                    processId,
-                    timestamp: new Date(),
-                    phase: ProcessingPhase.PROCESSING_VIDEO,
-                    variantName: resolution.name,
-                    resolution: `${resolution.width}x${resolution.height}`,
-                    index,
-                    total: plan.targetResolutions.length
-                } as VariantStartedEvent);
-                
-                const segmentationConfig = {
-                    segmentDuration: config.segmentDuration || 6,
-                    segmentPattern: `${resolution.name}_segment_%03d.ts`,
-                    playlistName: `quality_${resolution.name}.m3u8`,
-                    outputDir: videoDir
-                };
-
-                const videoConfig = HLSSegmentationManager.createVideoConfig(
-                    resolution,
-                    config.videoPreset || 'fast'
-                );
-
-                const audioConfig = HLSSegmentationManager.createAudioConfig(
-                    config.audioQuality || 'medium'
-                );
-
-                // Suscribirse a progreso de segmentación
-               this.segmentationManager.on('progress', (progress) => {
-                    this.emitVariantProgress(processId, resolution.name, progress.percent, progress);
-                    
-                    // También emitir progreso de fase
-                    const baseProgress = 20; // PROCESSING_VIDEO comienza en 20%
-                    const variantWeight = 50 / plan.targetResolutions.length; // 50% para todas las variantes
-                    const phasePercent = baseProgress + (index * variantWeight) + ((progress.percent / 100) * variantWeight);
-                    
-                    this.emitPhaseProgress(
-                        processId,
-                        ProcessingPhase.PROCESSING_VIDEO,
-                        phasePercent,
-                        `Processing ${resolution.name}: ${progress.percent}%`,
-                        { 
-                            variant: resolution.name,
-                            variantIndex: index,
-                            totalVariants: plan.targetResolutions.length
-                        }
-                    );
-                });
-
-                const result = await this.segmentationManager.segmentVideo(
-                    inputPath,
-                    segmentationConfig,
-                    {
-                        video: videoConfig,
-                        audio: audioConfig,
-                        resolution
-                    }
-                );
-
-                const variantResult: VariantResult = {
-                    name: resolution.name,
-                    resolution: `${resolution.width}x${resolution.height}`,
-                    playlistPath: result.playlistPath,
-                    segmentCount: result.segmentCount,
-                    size: result.fileSize,
-                    bitrate: resolution.bitrate
-                };
-
-                // Emitir evento de completado
-                this.emit(VideoProcessingEvent.VARIANT_COMPLETED, {
-                    processId,
-                    timestamp: new Date(),
-                    phase: ProcessingPhase.PROCESSING_VIDEO,
-                    variantName: resolution.name,
-                    resolution: `${resolution.width}x${resolution.height}`,
-                    playlistPath: result.playlistPath,
-                    segmentCount: result.segmentCount,
-                    fileSize: result.fileSize,
-                    duration: result.duration
-                } as VariantCompletedEvent);
-
-                return variantResult;
-
-            } catch (error: any) {
-                errors.push({
-                    stage: 'video-processing',
-                    variant: resolution.name,
-                    error: error.message,
-                    timestamp: new Date()
-                });
-                throw error;
-            }
-        });
-
-        if (config.parallel) {
-            results.push(...await Promise.all(processTasks));
-        } else {
-            for (const task of processTasks) {
-                results.push(await task);
-            }
-        }
-
-        return results;
-    }
-
-    // ==================== PROCESAMIENTO DE AUDIO ====================
-
-    /**
-     * Procesa pistas de audio alternativas
-     */
-    private async processAudioTracks(
-        inputPath: string,
-        outputDir: string,
-        audioTracks: AudioTrackInfo[],
-        duration: number,
-        processId: string,
-        errors: ProcessingError[]
-    ): Promise<AudioTrackResult[]> {
-        const results: AudioTrackResult[] = [];
-        const audioDir = path.join(outputDir, 'audio');
-
-        for (const track of audioTracks) {
-            try {
-                const segmentationConfig = {
-                    segmentDuration: 6,
-                    segmentPattern: `audio_${track.language}_segment_%03d.ts`,
-                    playlistName: `audio_${track.language}.m3u8`,
-                    outputDir: audioDir
-                };
-
-                const audioConfig = HLSSegmentationManager.createAudioConfig('medium');
-
-                const result = await this.segmentationManager.segmentAudio(
-                    inputPath,
-                    segmentationConfig,
-                    audioConfig,
-                    track.index
-                );
-
-                results.push({
-                    language: track.language,
-                    playlistPath: result.playlistPath,
-                    size: result.fileSize
-                });
-            } catch (error: any) {
-                errors.push({
-                    stage: 'audio-processing',
-                    variant: track.language,
-                    error: error.message,
-                    timestamp: new Date()
-                });
-            }
-        }
-        return results;
-    }
-
-    // ==================== PROCESAMIENTO DE SUBTÍTULOS ====================
-
-    /**
-     * Procesa subtítulos (placeholder - requiere SubtitleProcessor)
+     * Procesa subtítulos
      */
     private async processSubtitles(
-        inputPath: string,
-        outputDir: string,
-        subtitles: SubtitleInfo[],
-        processId: string,
-        errors: ProcessingError[]
-    ): Promise<SubtitleResult[]> {
-        const subtitleDir = path.join(outputDir, 'subtitles');
-        await fs.ensureDir(subtitleDir);
+        config: OrchestratorConfig
+    ): Promise<{ tracks: ProcessedSubtitle[]; defaultTrack?: ProcessedSubtitle }> {
+        this.emit('phase-start', 'subtitles');
 
-        const subtitleConfig = createDefaultSubtitleConfig(subtitleDir);
-        subtitleConfig.generateWebVTT = true;
+        const subtitlesDir = path.join(config.outputBaseDir, 'subtitles');
+        await fs.ensureDir(subtitlesDir);
 
-        try {
-            const processedSubs = await this.subtitleProcessor.extractEmbeddedSubtitles(
-                inputPath,
+        const subtitleConfig: SubtitleProcessorConfig = {
+            outputDir: subtitlesDir,
+            saveOriginal: true,
+            generateWebVTT: config.subtitles.generateWebVTT || false
+        };
+
+        const tracks: ProcessedSubtitle[] = [];
+
+        // Extraer subtítulos embebidos
+        if (config.subtitles.extractEmbedded) {
+            const embedded = await this.subtitleProcessor.extractEmbeddedSubtitles(
+                config.inputPath,
                 subtitleConfig,
-                { extractAll: true }
+                {
+                    extractAll: true,
+                    languages: config.subtitles.languages,
+                    includeForced: true
+                }
             );
-
-            return processedSubs.map(sub => {
-                const finalPath = sub.webvttPath || sub.customPath!;
-                const finalFormat = sub.webvttPath ? 'vtt' : sub.customFormat!.toString();
-                return {
-                    language: sub.language,
-                    format: finalFormat,
-                    path: finalPath
-                };
-            });
-        } catch (error: any) {
-            errors.push({
-                stage: 'subtitle-processing',
-                error: error.message,
-                timestamp: new Date()
-            });
-            return [];
+            tracks.push(...embedded);
         }
+
+        // Procesar subtítulos externos
+        if (config.subtitles.externalFiles) {
+            for (const external of config.subtitles.externalFiles) {
+                const processed = await this.subtitleProcessor.processExternalSubtitle(
+                    external.path,
+                    external.language,
+                    subtitleConfig
+                );
+                tracks.push(processed);
+            }
+        }
+
+        const defaultTrack = tracks.find(t => t.metadata.isDefault) || tracks[0];
+
+        this.emit('phase-complete', 'subtitles', tracks.length);
+
+        return { tracks, defaultTrack };
     }
 
-    // ==================== GENERACIÓN DE PLAYLISTS ====================
+    // ==================== MASTER PLAYLIST ====================
 
     /**
-     * Genera master playlist
+     * Genera master playlist que incluye todas las calidades, audios y subtítulos
      */
     private async generateMasterPlaylist(
-        outputDir: string,
-        variants: HLSVariant[],
-        audioTracks?: HLSAudioTrack[],
-        subtitles?: HLSSubtitle[]
+        config: OrchestratorConfig,
+        result: OrchestratorResult
     ): Promise<string> {
-        const masterPath = path.join(outputDir, 'master.m3u8');
-        await this.playlistGenerator.writeMasterPlaylist(
-            masterPath,
-            variants,
-            audioTracks,
-            subtitles
-        );
+        const masterPath = path.join(config.outputBaseDir, 'master.m3u8');
+        
+        let content = '#EXTM3U\n';
+        content += '#EXT-X-VERSION:4\n\n';
+
+        // Agregar variantes de video
+        if (result.video) {
+            for (const quality of result.video.qualities) {
+                const resolution = config.video.resolutions.find(r => 
+                    quality.playlistPath.includes(r.name)
+                );
+                
+                if (resolution) {
+                    const bitrate = parseInt(resolution.bitrate.replace('k', '')) * 1000;
+                    const relativePath = path.relative(
+                        config.outputBaseDir,
+                        quality.playlistPath
+                    ).replace(/\\/g, '/');
+
+                    content += `#EXT-X-STREAM-INF:BANDWIDTH=${bitrate},RESOLUTION=${resolution.width}x${resolution.height}\n`;
+                    content += `${relativePath}\n\n`;
+                }
+            }
+        }
+
+        // Agregar pistas de audio alternativas
+        if (result.audio && result.audio.tracks.length > 1) {
+            content += '# Audio tracks\n';
+            for (const track of result.audio.tracks) {
+                if (track.hlsPlaylistPath) {
+                    const relativePath = path.relative(
+                        config.outputBaseDir,
+                        track.hlsPlaylistPath
+                    ).replace(/\\/g, '/');
+
+                    const isDefault = track === result.audio.defaultTrack;
+                    content += `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="${track.original.languageName}",LANGUAGE="${track.original.language}",${isDefault ? 'DEFAULT=YES,' : ''}URI="${relativePath}"\n`;
+                }
+            }
+            content += '\n';
+        }
+
+        // Agregar subtítulos
+        if (result.subtitles && result.subtitles.tracks.length > 0) {
+            content += '# Subtitles\n';
+            for (const track of result.subtitles.tracks) {
+                // Use either webvtt playlist or direct .vtt file
+                const subtitlePath = track.webvttPlaylistPath || track.webvttPath;
+                
+                if (subtitlePath) {
+                    const relativePath = path.relative(
+                        config.outputBaseDir,
+                        subtitlePath
+                    ).replace(/\\/g, '/');
+
+                    const isDefault = track === result.subtitles.defaultTrack;
+                    content += `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="${track.languageName}",LANGUAGE="${track.language}",${isDefault ? 'DEFAULT=YES,' : ''}URI="${relativePath}"\n`;
+                }
+            }
+        }
+
+        await fs.writeFile(masterPath, content, 'utf8');
+        
         return masterPath;
+    }
+
+    // ==================== EVENT FORWARDING ====================
+
+    /**
+     * Configura reenvío de eventos de procesadores internos
+     */
+    private setupEventForwarding(): void {
+        // Eventos de video
+        this.segmentationManager.on('quality-progress', (data) => {
+            const globalPercent = data.globalPercent * this.phaseWeights.video;
+            
+            this.emit('progress', {
+                phase: 'video',
+                phasePercent: data.qualityPercent,
+                globalPercent,
+                currentItem: data.quality,
+                totalItems: data.totalQualities
+            } as OrchestratorProgress);
+        });
+
+        // Eventos de audio
+        this.audioProcessor.on('progress', (data) => {
+            const basePercent = this.phaseWeights.video * 100;
+            const phasePercent = data.percent;
+            const globalPercent = basePercent + (phasePercent * this.phaseWeights.audio);
+            
+            this.emit('progress', {
+                phase: 'audio',
+                phasePercent,
+                globalPercent,
+                currentItem: data.trackLanguage
+            } as OrchestratorProgress);
+        });
+
+        // Eventos de subtítulos
+        this.subtitleProcessor.on('extracting', (language) => {
+            const basePercent = (this.phaseWeights.video + this.phaseWeights.audio) * 100;
+            
+            this.emit('progress', {
+                phase: 'subtitles',
+                phasePercent: 0,
+                globalPercent: basePercent,
+                currentItem: language
+            } as OrchestratorProgress);
+        });
     }
 
     // ==================== UTILIDADES ====================
 
-    /**
-     * Configura estructura de directorios
-     */
-    private async setupDirectories(baseDir: string): Promise<void> {
-        await fs.ensureDir(path.join(baseDir, 'video'));
-        await fs.ensureDir(path.join(baseDir, 'audio'));
-        await fs.ensureDir(path.join(baseDir, 'subtitles'));
-        await fs.ensureDir(path.join(baseDir, 'custom'));
+    private getAudioBitrate(quality?: 'low' | 'medium' | 'high' | 'premium'): string {
+        const bitrates = {
+            low: '64k',
+            medium: '128k',
+            high: '192k',
+            premium: '256k'
+        };
+        return bitrates[quality || 'medium'];
     }
 
-    /**
-     * Genera ID único para el video
-     */
-    private generateVideoId(): string {
-        return `video_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-    }
-
-    /**
-     * Convierte a formato HLS audio tracks
-     */
-    private convertToHLSAudioTracks(
-        results: AudioTrackResult[],
-        trackInfo: AudioTrackInfo[]
-    ): HLSAudioTrack[] {
-        return results.map((result, index) => {
-            const info = trackInfo.find(t => t.language === result.language) || trackInfo[index];
-            return {
-                id: `audio_${result.language}`,
-                name: info.title || info.languageName,
-                language: result.language,
-                isDefault: info.isDefault,
-                channels: info.channels.toString(),
-                bitrate: '128k',
-                playlistPath: path.relative(path.dirname(result.playlistPath), result.playlistPath),
-                groupId: 'audio'
-            };
-        });
-    }
-
-    /**
-     * Convierte a formato HLS subtitles
-     */
-    private convertToHLSSubtitles(
-        results: SubtitleResult[],
-        subtitleInfo: SubtitleInfo[]
-    ): HLSSubtitle[] {
-        return results.map((result, index) => {
-            const info = subtitleInfo[index];
-            return {
-                id: `sub_${result.language}`,
-                name: info.name,
-                language: result.language,
-                isDefault: info.isDefault,
-                isForced: info.isForced,
-                playlistPath: `subtitles/subtitles_${result.language}.m3u8`,
-                vttPath: result.path,
-                groupId: 'subs'
-            };
-        });
-    }
-
-    /**
-     * Calcula tamaño total de salida
-     */
-    private async calculateTotalSize(dir: string): Promise<number> {
+    private async calculateTotalSize(directory: string): Promise<number> {
         let totalSize = 0;
         
-        const processDir = async (dirPath: string) => {
-            const items = await fs.readdir(dirPath);
+        const walk = async (dir: string) => {
+            const files = await fs.readdir(dir);
             
-            for (const item of items) {
-                const fullPath = path.join(dirPath, item);
-                const stat = await fs.stat(fullPath);
+            for (const file of files) {
+                const filePath = path.join(dir, file);
+                const stat = await fs.stat(filePath);
                 
                 if (stat.isDirectory()) {
-                    await processDir(fullPath);
+                    await walk(filePath);
                 } else {
                     totalSize += stat.size;
                 }
             }
         };
-
-        await processDir(dir);
+        
+        await walk(directory);
         return totalSize;
     }
 
     /**
-     * Limpia archivos temporales
+     * Calcula tiempo estimado total basado en duración del video
      */
-    private async cleanup(tempDir?: string): Promise<void> {
-        if (tempDir && await fs.pathExists(tempDir)) {
-            await fs.remove(tempDir);
-        }
-    }
-
-    /**
-     * Estima duración del procesamiento
-     */
-    private estimateProcessingDuration(
-        videoDuration: number,
-        variantCount: number,
-        parallel: boolean
-    ): number {
-        // Asumiendo encoding a 1x velocidad real
-        const baseTime = videoDuration;
-        
-        if (parallel) {
-            return baseTime * 1.2; // Overhead paralelo
-        }
-        
-        return baseTime * variantCount * 1.1; // Overhead secuencial
-    }
-
-    /**
-     * Estima tamaño procesado
-     */
-    private estimateProcessedSize(originalSize: number, variantCount: number): number {
-        // Estimación aproximada: cada variante es ~30% del tamaño original
-        return originalSize * variantCount * 0.3;
-    }
-
-    /**
-     * Obtiene nombre de idioma
-     */
-    private getLanguageName(code: string): string {
-        const languages: Record<string, string> = {
-            'en': 'English',
-            'es': 'Español',
-            'fr': 'Français',
-            'de': 'Deutsch',
-            'it': 'Italiano',
-            'pt': 'Português',
-            'ja': '日本語',
-            'zh': '中文',
-            'ko': '한국어',
-            'ru': 'Русский',
-            'ar': 'العربية'
-        };
-        
-        return languages[code] || code.toUpperCase();
-    }
-    private async generateSubtitlePlaylists(
-        results: SubtitleResult[],
-        subtitleInfo: SubtitleInfo[],
-        subtitleDir: string,
-        duration: number
-    ): Promise<HLSSubtitle[]> {
-        const hlsSubtitles: HLSSubtitle[] = [];
-
-        for (const result of results) {
-            const info = subtitleInfo.find(s => s.language === result.language);
-            if (!info) continue;
-
-            const vttFilename = `subtitle_${result.language}.vtt`;
-            const playlistFilename = `subtitle_${result.language}.m3u8`;
-            const playlistPath = path.join(subtitleDir, playlistFilename);
-
-            const standardVttPath = path.join(subtitleDir, vttFilename);
-            if (result.path !== standardVttPath) {
-                await fs.copy(result.path, standardVttPath);
-            }
-
-            await this.playlistGenerator.writeSubtitlePlaylist(
-                playlistPath,
-                vttFilename,
-                duration
-            );
-
-            hlsSubtitles.push({
-                name: info.name,
-                language: result.language,
-                isDefault: info.isDefault,
-                isForced: info.isForced,
-                playlistPath: `subtitles/${playlistFilename}`,
-                groupId: 'subs'
-            });
-        }
-        return hlsSubtitles;
-    }
-    private emitPhaseProgress(
-        processId: string,
-        phase: ProcessingPhase,
-        percent: number,
-        message: string,
-        details?: Record<string, any>
-    ): void {
-        this.progressTracker?.updatePhase(phase, percent);
-        
-        this.emit(VideoProcessingEvent.PHASE_PROGRESS, {
-            processId,
-            timestamp: new Date(),
-            phase,
-            percent,
-            message,
-            details
+    async estimateProcessingTime(
+        inputPath: string,
+        config: OrchestratorConfig
+    ): Promise<number> {
+        const { FFmpegCommand } = await import('../FFmpegCommand');
+        const probeData = await FFmpegCommand.probe(inputPath, {
+            ffprobePath: this.ffprobePath
         });
+        
+        const duration = probeData.format.duration || 0;
+        const qualityCount = config.video.resolutions.length;
+        
+        // Estimación muy aproximada: 0.5x realtime por calidad
+        const estimatedSeconds = duration * qualityCount * 0.5;
+        
+        return estimatedSeconds * 1000; // ms
     }
+}
+
+// ==================== HELPER FUNCTIONS ====================
+
+/**
+ * Crea configuración por defecto
+ */
+export function createDefaultOrchestratorConfig(
+    inputPath: string,
+    outputBaseDir: string,
+    resolutions: Resolution[]
+): OrchestratorConfig {
+    return {
+        inputPath,
+        outputBaseDir,
+        video: {
+            enabled: true,
+            resolutions,
+            preset: 'fast',
+            segmentDuration: 6,
+            parallel: false
+        },
+        audio: {
+            enabled: true,
+            extractAll: false,
+            quality: 'medium',
+            generateHLS: true
+        },
+        subtitles: {
+            enabled: true,
+            extractEmbedded: true,
+            generateWebVTT: false
+        }
+    };
+}
+
+/**
+ * Crea configuración para streaming adaptativo completo
+ */
+export function createStreamingConfig(
+    inputPath: string,
+    outputBaseDir: string,
+    resolutions: Resolution[],
+    options?: {
+        multiAudio?: boolean;
+        languages?: string[];
+        preset?: 'fast' | 'medium';
+    }
+): OrchestratorConfig {
+    return {
+        inputPath,
+        outputBaseDir,
+        video: {
+            enabled: true,
+            resolutions,
+            preset: options?.preset || 'fast',
+            segmentDuration: 6,
+            parallel: false
+        },
+        audio: {
+            enabled: true,
+            extractAll: options?.multiAudio || false,
+            languages: options?.languages,
+            quality: 'high',
+            generateHLS: true
+        },
+        subtitles: {
+            enabled: true,
+            extractEmbedded: true,
+            languages: options?.languages,
+            generateWebVTT: true
+        }
+    };
 }
 
 export default VideoProcessingOrchestrator;
