@@ -111,7 +111,8 @@ describe('HLSSegmentationManager Tests', () => {
             const videoConfig = HLSSegmentationManager.createVideoConfig(resolution);
 
             let progressCount = 0;
-            manager.on('progress', () => {
+            manager.on('progress', (data) => {
+                console.log('Progress:', data);
                 progressCount++;
             });
 

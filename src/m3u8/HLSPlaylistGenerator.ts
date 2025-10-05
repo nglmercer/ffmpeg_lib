@@ -1,12 +1,16 @@
-import fs from 'fs-extra';
-import path from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
 import type {
   HLSVariant,
   HLSAudioTrack,
   HLSSubtitle,
   HLSSegment,
-  HLSGeneratorConfig
+  HLSGeneratorConfig,
+  ValidationError
 } from './types';
+import { HLSPlaylistParser } from './HLSPlaylistParser';
+import { HLSPlaylistValidator } from './HLSPlaylistValidator';
+import { HLSUtils } from './HLSUtils';
 
 // ==================== CLASE PRINCIPAL ====================
 
@@ -83,7 +87,7 @@ export class HLSPlaylistGenerator {
             `URI="${audio.playlistPath}"`
         ];
 
-        return `#EXT-X-MEDIA:${attrs.join(',')}}`;
+        return `#EXT-X-MEDIA:${attrs.join(',')}`;
     }
 
     /**
@@ -112,8 +116,8 @@ export class HLSPlaylistGenerator {
      */
     private generateVariantEntry(
         variant: HLSVariant,
-        audioTracks?: HLSAudioTrack[],
-        subtitles?: HLSSubtitle[]
+        _audioTracks?: HLSAudioTrack[],
+        _subtitles?: HLSSubtitle[]
     ): string {
         const attrs: string[] = [
             `BANDWIDTH=${variant.bandwidth}`,
@@ -126,12 +130,12 @@ export class HLSPlaylistGenerator {
         }
 
         // Vincular audio group si hay múltiples pistas
-        if (audioTracks && audioTracks.length > 0 && variant.audioGroup) {
+        if (variant.audioGroup) {
             attrs.push(`AUDIO="${variant.audioGroup}"`);
         }
 
         // Vincular subtitle group
-        if (subtitles && subtitles.length > 0 && variant.subtitleGroup) {
+        if (variant.subtitleGroup) {
             attrs.push(`SUBTITLES="${variant.subtitleGroup}"`);
         }
 
@@ -148,18 +152,36 @@ export class HLSPlaylistGenerator {
 
         // Header
         lines.push('#EXTM3U');
+        // Calculate target duration: use config value only if segments exist, otherwise use 0
+        const targetDuration = segments.length > 0 
+            ? (this.config.targetDuration !== undefined ? this.config.targetDuration : Math.max(...segments.map(s => Math.ceil(s.duration))))
+            : 0;
+        
         lines.push(`#EXT-X-VERSION:${this.config.version}`);
-        lines.push(`#EXT-X-TARGETDURATION:${this.config.targetDuration}`);
+        lines.push(`#EXT-X-TARGETDURATION:${targetDuration}`);
         lines.push(`#EXT-X-MEDIA-SEQUENCE:0`);
         
         if (this.config.playlistType) {
             lines.push(`#EXT-X-PLAYLIST-TYPE:${this.config.playlistType}`);
         }
 
+        // Add allow cache if explicitly set
+        if (this.config.allowCache !== undefined) {
+            lines.push(`#EXT-X-ALLOW-CACHE:${this.config.allowCache ? 'YES' : 'NO'}`);
+        }
+
         lines.push('');
 
         // Segmentos
         for (const segment of segments) {
+            if (segment.byteRange) {
+                // Convert start-end format to length@offset format
+                const [start, end] = segment.byteRange.split('-').map(Number);
+                if (start !== undefined && end !== undefined) {
+                    const length = end - start + 1;
+                    lines.push(`#EXT-X-BYTERANGE:${length}@${start}`);
+                }
+            }
             lines.push(`#EXTINF:${segment.duration.toFixed(6)},`);
             lines.push(segment.uri);
         }
@@ -215,9 +237,25 @@ export class HLSPlaylistGenerator {
      * Calcula el bandwidth total de una variante
      */
     static calculateBandwidth(videoBitrate: string, audioBitrate: string = '128k'): number {
-        const videoKbps = parseInt(videoBitrate.replace('k', ''));
-        const audioKbps = parseInt(audioBitrate.replace('k', ''));
-        return (videoKbps + audioKbps) * 1000; // Convertir a bps
+        // Handle different formats: "2000k", "2000", "128k", "128"
+        const parseBitrate = (bitrate: string): number => {
+            const hasK = bitrate.toLowerCase().includes('k');
+            const cleanValue = bitrate.replace(/k/gi, '');
+            const value = parseInt(cleanValue) || 0;
+            return hasK ? value * 1000 : value; // Multiply by 1000 for k values, return plain numbers as-is
+        };
+        
+        const videoBps = parseBitrate(videoBitrate);
+        const audioBps = parseBitrate(audioBitrate);
+        
+        // Handle the special case where both are 0
+        if (videoBps === 0 && audioBps === 0) {
+            return 0;
+        }
+        
+        // Use default 128kbps if audio is 0 and video is not 0
+        const finalAudioBps = audioBps === 0 && videoBps > 0 ? 128000 : audioBps;
+        return videoBps + finalAudioBps;
     }
 
     /**
@@ -251,27 +289,60 @@ export class HLSPlaylistGenerator {
     }
 
     /**
-     * Valida que un playlist sea válido
+     * Valida que un playlist sea válido (método mejorado)
      */
-    static validatePlaylist(content: string): { valid: boolean; errors: string[] } {
-        const errors: string[] = [];
+    static validatePlaylist(content: string): { valid: boolean; errors: ValidationError[] } {
+        return HLSPlaylistValidator.validate(content);
+    }
 
-        if (!content.startsWith('#EXTM3U')) {
-            errors.push('Playlist must start with #EXTM3U');
-        }
+    /**
+     * Parsea un playlist M3U8 existente
+     */
+    static parsePlaylist(content: string): HLSPlaylistParser {
+        return new HLSPlaylistParser(content);
+    }
 
-        if (!content.includes('#EXT-X-VERSION')) {
-            errors.push('Missing #EXT-X-VERSION tag');
-        }
-
-        if (content.includes('#EXT-X-PLAYLIST-TYPE:VOD') && !content.includes('#EXT-X-ENDLIST')) {
-            errors.push('VOD playlist must end with #EXT-X-ENDLIST');
-        }
-
+    /**
+     * Valida y repara un playlist si es necesario
+     */
+    static validateAndRepair(content: string): { 
+        valid: boolean; 
+        errors: string[]; 
+        repaired: string | null;
+        wasRepaired: boolean;
+    } {
+        const result = HLSPlaylistValidator.validateAndRepair(content);
         return {
-            valid: errors.length === 0,
-            errors
+            valid: result.valid,
+            errors: result.issues.map(issue => issue.message),
+            repaired: result.repairedContent,
+            wasRepaired: result.repairedContent !== content
         };
+    }
+
+    /**
+     * Compara dos playlists para verificar compatibilidad
+     */
+    static comparePlaylists(content1: string, content2: string): {
+        compatible: boolean;
+        differences: string[];
+        warnings: string[];
+    } {
+        return HLSUtils.comparePlaylists(content1, content2);
+    }
+
+    /**
+     * Genera un hash único para un playlist (para detección de cambios)
+     */
+    static generatePlaylistHash(content: string): string {
+        return HLSUtils.generatePlaylistHash(content);
+    }
+
+    /**
+     * Normaliza un playlist para mejor compatibilidad entre reproductores
+     */
+    static normalizePlaylist(content: string): string {
+        return HLSUtils.normalizePlaylist(content);
     }
 
     // ==================== FILE WRITING ====================
@@ -286,8 +357,9 @@ export class HLSPlaylistGenerator {
         subtitles?: HLSSubtitle[]
     ): Promise<void> {
         const content = this.generateMasterPlaylist(variants, audioTracks, subtitles);
-        await fs.ensureDir(path.dirname(outputPath));
-        await fs.writeFile(outputPath, content, 'utf8');
+        const dir = path.dirname(outputPath);
+        await fs.promises.mkdir(dir, { recursive: true });
+        await fs.promises.writeFile(outputPath, content, 'utf8');
     }
 
     /**
@@ -298,8 +370,9 @@ export class HLSPlaylistGenerator {
         segments: HLSSegment[]
     ): Promise<void> {
         const content = this.generateVariantPlaylist(segments);
-        await fs.ensureDir(path.dirname(outputPath));
-        await fs.writeFile(outputPath, content, 'utf8');
+        const dir = path.dirname(outputPath);
+        await fs.promises.mkdir(dir, { recursive: true });
+        await fs.promises.writeFile(outputPath, content, 'utf8');
     }
 
     /**
@@ -311,8 +384,9 @@ export class HLSPlaylistGenerator {
         duration: number
     ): Promise<void> {
         const content = this.generateSubtitlePlaylist(vttPath, duration);
-        await fs.ensureDir(path.dirname(outputPath));
-        await fs.writeFile(outputPath, content, 'utf8');
+        const dir = path.dirname(outputPath);
+        await fs.promises.mkdir(dir, { recursive: true });
+        await fs.promises.writeFile(outputPath, content, 'utf8');
     }
 }
 
@@ -350,9 +424,9 @@ export class HLSVariantBuilder {
             audioBitrate,
             codec,
             playlistPath: `video/quality_${name}.m3u8`,
-            frameRate: options?.frameRate,
-            audioGroup: options?.audioGroup,
-            subtitleGroup: options?.subtitleGroup
+            frameRate: options?.frameRate || 30,
+            audioGroup: options?.audioGroup || '',
+            subtitleGroup: options?.subtitleGroup || ''
         });
 
         return this;

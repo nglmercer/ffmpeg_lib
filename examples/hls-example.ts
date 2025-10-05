@@ -3,7 +3,8 @@ import fs from 'fs-extra';
 import { FFmpegManager } from '../src/FFmpegManager';
 import { TestMediaGenerator } from '../src/TestMediaGenerator';
 import { MediaMetadataExtractor } from '../src/MediaMetadataExtractor';
-import { VideoProcessingOrchestrator, ProcessingConfig } from '../src/hls/VideoProcessingOrchestrator';
+import { VideoProcessingOrchestrator } from '../src/hls/VideoProcessingOrchestrator';
+import { ProcessingConfig} from '../src/hls/types';
 import { AudioTrackProcessor, createDefaultAudioConfig } from '../src/hls/AudioTrackProcessor';
 import { SubtitleProcessor, createDefaultSubtitleConfig } from '../src/hls/SubtitleProcessor';
 
@@ -137,15 +138,8 @@ async function processVideoToHLS() {
     
     // Escuchar eventos de progreso (solo hitos importantes)
     orchestrator.on('progress', (progress) => {
-      if (progress.percent % 25 === 0 || progress.stage === 'complete') {
-        console.log(`   [${progress.stage}] ${progress.percent.toFixed(0)}% - ${progress.message}`);
-      }
+      console.log(progress);
     });
-
-    orchestrator.on('variant-complete', (name, result) => {
-      console.log(`   ✅ ${name}: ${result.segmentCount} segmentos`);
-    });
-
     const startTime = Date.now();
     const result = await orchestrator.processVideo(testVideo.path, config);
     const processingTime = (Date.now() - startTime) / 1000;

@@ -5,15 +5,8 @@ import fs from 'fs-extra';
 import { MediaMetadataExtractor, MediaMetadata, MediaType } from '../MediaMetadataExtractor';
 import { ResolutionUtils, Resolution } from '../utils/ResolutionUtils';
 import { HLSSegmentationManager } from './HLSSegmentationManager';
-import { 
-    HLSPlaylistGenerator, 
-    HLSVariantBuilder,
-} from './HLSPlaylistGenerator';
-import type {
-        HLSAudioTrack,
-    HLSSubtitle,
-        HLSVariant
-} from './types';
+import {HLSPlaylistGenerator,HLSSubtitle,HLSVariantBuilder,HLSVariant,HLSAudioTrack}from '../m3u8/index'
+
 import { FFmpegManager } from '../FFmpegManager';
 import { SubtitleProcessor, createDefaultSubtitleConfig } from './SubtitleProcessor';
 
@@ -716,7 +709,7 @@ export class VideoProcessingOrchestrator extends TypedVideoEventEmitter {
                 name: info.title || info.languageName,
                 language: result.language,
                 isDefault: info.isDefault,
-                channels: info.channels,
+                channels: info.channels.toString(),
                 bitrate: '128k',
                 playlistPath: path.relative(path.dirname(result.playlistPath), result.playlistPath),
                 groupId: 'audio'
@@ -854,13 +847,11 @@ export class VideoProcessingOrchestrator extends TypedVideoEventEmitter {
             );
 
             hlsSubtitles.push({
-                id: `sub_${result.language}`,
                 name: info.name,
                 language: result.language,
                 isDefault: info.isDefault,
                 isForced: info.isForced,
                 playlistPath: `subtitles/${playlistFilename}`,
-                vttPath: `subtitles/${vttFilename}`,
                 groupId: 'subs'
             });
         }

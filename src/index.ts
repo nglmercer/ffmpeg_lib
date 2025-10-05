@@ -9,8 +9,6 @@ import {
   AudioTrackProcessor,
   SubtitleProcessor,
   HLSSegmentationManager,
-  HLSPlaylistGenerator,
-  HLSVariantBuilder,
   createDefaultAudioConfig,
   createMultiLanguageAudioConfig,
   isMultiChannelAudio,
@@ -34,8 +32,6 @@ export {
   AudioTrackProcessor,
   SubtitleProcessor,
   HLSSegmentationManager,
-  HLSPlaylistGenerator,
-  HLSVariantBuilder,
   
   // HLS utility functions
   createDefaultAudioConfig,
@@ -77,4 +73,28 @@ export type {
   AspectRatio,
   Resolution
 };
+import { 
+    HLSPlaylistGenerator, 
+    HLSVariantBuilder,
+    HLSAudioTrack,
+    HLSSubtitle,
+    HLSVariant,
+    HLSGeneratorConfig,
+    HLSPlaylistParser,
+    HLSPlaylistValidator,
+    ParsedAudioTrack,
+    ParsedSubtitle,
+} from './m3u8/index';
+export { 
+    HLSPlaylistGenerator, 
+    HLSVariantBuilder,
+    HLSAudioTrack,
+    HLSSubtitle,
+    HLSVariant,
+    HLSGeneratorConfig,
+    HLSPlaylistParser,
+    HLSPlaylistValidator,
+    ParsedAudioTrack,
+    ParsedSubtitle,
+}
 export { ResolutionUtils };

@@ -23,10 +23,5 @@ export {
   HLSSegmentationManager 
 } from './HLSSegmentationManager.js';
 
-export { 
-  HLSPlaylistGenerator,
-  HLSVariantBuilder
-} from './HLSPlaylistGenerator.js';
-
 // Re-export all types from centralized types file
 export type * from './types.js';
