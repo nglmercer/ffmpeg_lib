@@ -1,6 +1,6 @@
 {
   "name": "ffmpeg-lib",
-  "version": "1.1.2",
+  "version": "1.1.5",
   "description": "A comprehensive, fluent, and type-safe Node.js library for programmatic interaction with FFmpeg and FFprobe",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

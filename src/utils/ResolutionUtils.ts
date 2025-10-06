@@ -120,31 +120,35 @@ export class ResolutionUtils {
 
     /**
      * Genera un nombre descriptivo para la resolución
+     * CORREGIDO: Ahora verifica la altura real de la resolución
      */
     private static generateResolutionName(width: number, height: number): string {
-        // Determinar la dimensión mayor (altura para vertical, ancho para horizontal)
+        // Determinar la dimensión mayor (altura para horizontal, ancho para vertical)
         const isVertical = height > width;
         const primaryDimension = isVertical ? height : width;
+        const secondaryDimension = isVertical ? width : height;
 
-        // Buscar la altura de referencia más cercana
+        // Para resoluciones estándar, usar la altura real
+        // Buscar la altura de referencia más cercana a la ALTURA REAL
         let closestHeight = this.REFERENCE_HEIGHTS[0];
-        let minDiff = Math.abs(primaryDimension - closestHeight);
+        let minDiff = Math.abs(secondaryDimension - closestHeight);
 
         for (const refHeight of this.REFERENCE_HEIGHTS) {
-            const diff = Math.abs(primaryDimension - refHeight);
+            const diff = Math.abs(secondaryDimension - refHeight);
             if (diff < minDiff) {
                 minDiff = diff;
                 closestHeight = refHeight;
             }
         }
 
-        // Si la diferencia es muy grande (>15%), usar dimensiones exactas
-        const tolerance = closestHeight * 0.15;
-        if (minDiff > tolerance) {
-            return `${width}x${height}`;
+        // Si la diferencia es menor al 10%, usar el nombre estándar
+        const tolerance = closestHeight * 0.10;
+        if (minDiff <= tolerance) {
+            return `${closestHeight}p`;
         }
 
-        return `${closestHeight}p`;
+        // Si no coincide con ninguna altura estándar, usar dimensiones exactas
+        return `${width}x${height}`;
     }
 
     /**

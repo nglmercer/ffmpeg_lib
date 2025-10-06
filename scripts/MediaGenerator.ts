@@ -17,7 +17,7 @@ async function main() {
   const video = await generator.generateVideoWithSubtitles('test_mkv.mkv', {
     duration: 10
   }); */
-  const resolutions = ResolutionUtils.generateLowerResolutions(1280, 720).slice(0, 1);
+  const resolutions = ResolutionUtils.generateLowerResolutions(1280, 720);
   
   const config = createDefaultOrchestratorConfig(
       path.join(testOutputDir, 'test_mkv.mkv'),
