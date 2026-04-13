@@ -9,17 +9,18 @@ async function main(): Promise<void> {
     try {
         const manager = new FFmpegManager();
         await manager.downloadFFmpegBinaries();
-        
-        console.log('\n✅ FFmpeg binaries updated successfully!');
+
+        console.log('FFmpeg binaries updated successfully!');
         console.log('Binaries location:', manager.binariesDir);
-        
+
         // Verify the binaries
         const { ffmpegPath, ffprobePath } = await manager.verifyBinaries();
         console.log('FFmpeg path:', ffmpegPath);
         console.log('FFprobe path:', ffprobePath);
-        
+
     } catch (error) {
-        console.error('\n❌ Error updating FFmpeg binaries:', (error as Error).message);
+        const err_msg = error instanceof Error ? error.message : String(error);
+        console.error('Error updating FFmpeg binaries:', err_msg);
         process.exit(1);
     }
 }

@@ -254,10 +254,8 @@ class TestMediaGenerator {
     const outputPath = path.join(this.outputDir, filename);
 
     // Crear archivo con datos aleatorios (corrupto)
-    const buffer = Buffer.alloc(1024);
-    for (let i = 0; i < buffer.length; i++) {
-      buffer[i] = Math.floor(Math.random() * 256);
-    }
+    // Crear archivo con texto puramente de texto para fallar predeciblemente
+    const buffer = Buffer.from('INVALID_VIDEO_FILE_CONTENT_XYZ_NOT_A_MEDIA_FILE');
 
     await fs.writeFile(outputPath, buffer);
 

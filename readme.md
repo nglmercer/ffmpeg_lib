@@ -19,4 +19,50 @@ Please see the `docs/` directory for detailed reading on various internal system
 bun add ffmpeg-lib
 ```
 
+## Quick Examples
+
+### Basic Video Conversion
+```typescript
+import { FFmpegCommand } from 'ffmpeg-lib';
+
+const command = new FFmpegCommand();
+
+await command
+  .input('input.mp4')
+  .output('output.mkv')
+  .videoCodec('libx264')
+  .videoBitrate('2000k')
+  .audioCodec('aac')
+  .run();
+```
+
+### Extracting Audio
+```typescript
+import { FFmpegCommand } from 'ffmpeg-lib';
+
+const command = new FFmpegCommand();
+
+await command
+  .input('video.mp4')
+  .output('audio.mp3')
+  .noVideo()
+  .audioCodec('mp3')
+  .run();
+```
+
+### Generating Screenshots
+```typescript
+import { FFmpegCommand } from 'ffmpeg-lib';
+
+const command = new FFmpegCommand();
+command.input('video.mp4');
+
+const thumbnails = await command.screenshots({
+  timestamps: ['00:00:05', '00:00:10'],
+  folder: './thumbnails',
+  filename: 'thumb_%i.jpg',
+  size: '1280x720'
+});
+```
+
 *For more details on operations, see [Getting Started](./docs/getting-started.md).*

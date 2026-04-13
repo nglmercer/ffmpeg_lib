@@ -17,7 +17,7 @@ describe('FFmpegCommand Tests', () => {
     // Setup FFmpeg binaries and test environment
     const manager = new FFmpegManager();
     const isAvailable = await manager.isFFmpegAvailable();
-    if (!isAvailable){
+    if (!isAvailable) {
       await manager.downloadFFmpegBinaries();
     }
     const binaries = await manager.verifyBinaries();
@@ -97,7 +97,7 @@ describe('FFmpegCommand Tests', () => {
       const result = ffmpegCommand
         .input('input.mp4')
         .output('output.mp4');
-      
+
       expect(result).toBe(ffmpegCommand);
       expect(ffmpegCommand).toBeDefined();
     });
@@ -161,7 +161,7 @@ describe('FFmpegCommand Tests', () => {
         .fps(60)
         .size('1280x720')
         .aspect('16:9');
-      
+
       expect(result).toBe(ffmpegCommand);
     });
   });
@@ -203,7 +203,7 @@ describe('FFmpegCommand Tests', () => {
         .audioBitrate('192k')
         .audioChannels(2)
         .audioFrequency(48000);
-      
+
       expect(result).toBe(ffmpegCommand);
     });
   });
@@ -276,7 +276,7 @@ describe('FFmpegCommand Tests', () => {
         .seek('00:00:10')
         .duration('00:00:30')
         .setStartTime('00:00:05');
-      
+
       expect(result).toBe(ffmpegCommand);
     });
   });
@@ -320,7 +320,7 @@ describe('FFmpegCommand Tests', () => {
         .videoFilters('scale=1920x1080')
         .audioFilters('volume=1.0')
         .complexFilter('[0:v]fade=out:300:30');
-      
+
       expect(result).toBe(ffmpegCommand);
     });
   });
@@ -368,7 +368,7 @@ describe('FFmpegCommand Tests', () => {
         .inputOptions('-hwaccel cuda')
         .preset('slow')
         .native();
-      
+
       expect(result).toBe(ffmpegCommand);
     });
   });
@@ -569,13 +569,13 @@ describe('FFmpegCommand Tests', () => {
       expect(probeData.streams).toBeDefined();
       expect(Array.isArray(probeData.streams)).toBe(true);
       expect(probeData.streams.length).toBeGreaterThan(0);
-      
+
       // Check for video stream
       const videoStream = probeData.streams.find((stream: any) => stream.codec_type === 'video');
       expect(videoStream).toBeDefined();
       expect(videoStream?.width).toBe(1280);
       expect(videoStream?.height).toBe(720);
-      
+
       // Check format information
       expect(probeData.format.duration).toBeDefined();
       expect(Number(probeData.format?.duration)).toBeGreaterThan(2);
@@ -595,7 +595,7 @@ describe('FFmpegCommand Tests', () => {
       expect(probeData.format).toBeDefined();
       expect(probeData.streams).toBeDefined();
       expect(probeData.streams.length).toBeGreaterThan(0);
-      
+
       const audioStream = probeData.streams.find(s => s.codec_type === 'audio');
       expect(audioStream).toBeDefined();
       expect(audioStream?.channels).toBe(2);
@@ -608,8 +608,22 @@ describe('FFmpegCommand Tests', () => {
     });
 
     test('should throw error for corrupted file', async () => {
+      //not trowh this resolver with err msg
+      /*
+      /tmp/ffmpeg-command-test-1776121073589/corrupted.mp4
+      550 |                 file
+      551 |             ];
+      552 | 
+      553 |             execFile(ffprobePath, args, (error, stdout, stderr) => {
+      554 |                 if (error) {
+      555 |                     reject(new Error(`FFprobe error: ${stderr || error.message}`));
+                                          ^
+      error: FFprobe error: [mov,mp4,m4a,3gp,3g2,mj2 @ 0x2d54da40] moov atom not found
+      /tmp/ffmpeg-command-test-1776121073589/corrupted.mp4: Invalid data found when processing input
+
+      */
       const corruptedFile = await testMediaGenerator.generateCorruptedVideo('corrupted.mp4');
-      
+
       await expect(
         FFmpegCommand.probe(corruptedFile.path, { ffprobePath })
       ).rejects.toThrow();
@@ -654,7 +668,7 @@ describe('FFmpegCommand Tests', () => {
       expect(screenshots).toBeDefined();
       expect(Array.isArray(screenshots)).toBe(true);
       expect(screenshots.length).toBe(2);
-      
+
       for (const screenshot of screenshots) {
         expect(await fs.pathExists(screenshot)).toBe(true);
       }
@@ -678,7 +692,7 @@ describe('FFmpegCommand Tests', () => {
       expect(screenshots).toBeDefined();
       expect(Array.isArray(screenshots)).toBe(true);
       expect(screenshots.length).toBe(3);
-      
+
       for (const screenshot of screenshots) {
         expect(await fs.pathExists(screenshot)).toBe(true);
       }
@@ -702,7 +716,7 @@ describe('FFmpegCommand Tests', () => {
       expect(screenshots).toBeDefined();
       expect(Array.isArray(screenshots)).toBe(true);
       expect(screenshots.length).toBe(2);
-      
+
       for (const screenshot of screenshots) {
         expect(await fs.pathExists(screenshot)).toBe(true);
       }
@@ -716,7 +730,7 @@ describe('FFmpegCommand Tests', () => {
       });
 
       ffmpegCommand.input(testVideo.path);
-      
+
       await expect(
         ffmpegCommand.screenshots({
           folder: path.join(testOutputDir, 'screenshots_error')
@@ -734,7 +748,7 @@ describe('FFmpegCommand Tests', () => {
         .audioCodec('aac');
 
       const cloned = original.clone();
-      
+
       expect(cloned).toBeInstanceOf(FFmpegCommand);
       expect(cloned).not.toBe(original);
     });
@@ -839,7 +853,7 @@ describe('FFmpegCommand Tests', () => {
 
     test('should handle corrupted input file', async () => {
       const corruptedFile = await testMediaGenerator.generateCorruptedVideo('corrupted_error.mp4');
-      
+
       await expect(
         ffmpegCommand
           .input(corruptedFile.path)
