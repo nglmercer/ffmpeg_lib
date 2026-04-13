@@ -30,7 +30,7 @@ describe('SubtitleProcessor Tests', () => {
     });
 
     afterAll(async () => {
-        await fs3.remove(testDir);
+        if (testDir) await fs3.remove(testDir);
     });
 
     describe('Format Detection', () => {

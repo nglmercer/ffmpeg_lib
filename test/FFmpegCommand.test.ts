@@ -34,7 +34,7 @@ describe('FFmpegCommand Tests', () => {
 
   afterAll(async () => {
     // Cleanup test files
-    await testMediaGenerator.cleanup();
+    await testMediaGenerator?.cleanup();
     if (await fs.pathExists(testOutputDir)) {
       await fs.remove(testOutputDir);
     }

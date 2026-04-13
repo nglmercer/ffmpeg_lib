@@ -37,10 +37,10 @@ describe('AudioTrackProcessor Tests', () => {
             duration: 10
         });
         testVideoPath = video.path;
-    });
+    }, 120000);
 
     afterAll(async () => {
-        await mediaGenerator.cleanup();
+        await mediaGenerator?.cleanup();
         await fs.remove(testDir);
     });
 

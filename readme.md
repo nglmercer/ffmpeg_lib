@@ -1,86 +1,22 @@
-# FFmpegLib
+# FFmpeg Lib
 
-A comprehensive, fluent, and type-safe Node.js library for programmatic interaction with FFmpeg and FFprobe.
+![Logo](https://img.shields.io/badge/FFMPEG-LIB-%23000?style=for-the-badge&logo=ffmpeg&logoColor=green)
 
-<!-- Optional: Add badges here -->
-[![NPM version](https://img.shields.io/npm/v/ffmpeg-lib.svg)](https://www.npmjs.com/package/ffmpeg-lib)
-[![Build Status](https://github.com/nglmercer/ffmpeg_lib/workflows/CI/badge.svg)](https://github.com/nglmercer/ffmpeg_lib/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+A comprehensive, fluent, and type-safe Node.js wrapper for FFmpeg and FFprobe geared heavily towards reliable operations, HLS streaming, multi-bitrate segmented encoding, and resilient lifecycle/error recovery.
 
-FFmpegLib provides a powerful and intuitive interface to handle complex multimedia operations in Node.js. It abstracts the complexity of the FFmpeg command-line interface while offering full access to its capabilities, from simple conversions to advanced HLS packaging and media analysis.
+## Documentation Index
 
-## Core Features
+Please see the `docs/` directory for detailed reading on various internal systems:
 
-- **Fluent Command Builder (`FFmpegCommand`)**: A chainable, type-safe API for building complex FFmpeg commands.
-- **Advanced Process Management (`FFmpegManager`)**: High-level control with job queuing, progress monitoring, and resource management.
-- **HLS Packaging Suite**: A complete toolset for HLS video processing, including segmentation, playlist generation, and variant stream creation.
-- **Metadata Extraction (`MediaMetadataExtractor`)**: Easily extract detailed metadata from media files using FFprobe.
-- **Test Media Generation (`TestMediaGenerator`)**: Create synthetic video, audio, and image files for testing purposes.
-- **Full TypeScript Support**: Modern, type-safe development experience with comprehensive type definitions.
+- [1. Getting Started](./docs/getting-started.md) - Installation and basic rapid initialization scenarios.
+- [2. System FFmpeg Manager](./docs/ffmpeg-manager.md) - Automatically managing, fetching, and locally authenticating `ffmpeg`/`ffprobe` binaries without cluttering local paths.
+- [3. FFmpeg Fluent Command](./docs/ffmpeg-command.md) - Fluent abstraction for chaining intricate commands predictably.
+- [4. Advanced HLS Orchestration](./docs/hls-streaming.md) - Demuxing, processing streaming topologies natively via the `VideoProcessingOrchestrator` pipelines.
 
 ## Installation
 
 ```bash
-npm install ffmpeg-lib
-# or
-yarn add ffmpeg-lib
-# or
 bun add ffmpeg-lib
 ```
 
-## Quick Start
-
-Here's how easy it is to perform a video conversion while monitoring its progress:
-
-```typescript
-import { FFmpegManager } from 'ffmpeg-lib';
-
-// Initialize the manager with the path to your FFmpeg executable
-const manager = new FFmpegManager('/usr/bin/ffmpeg');
-
-// Listen for progress events
-manager.on('progress', (event) => {
-    console.log(`Progress: ${event.progress}% | Speed: ${event.speed}`);
-});
-
-// Listen for completion
-manager.on('completed', (event) => {
-    console.log(`Conversion finished in ${event.duration}ms!`);
-});
-
-// Execute a conversion command
-async function convertVideo() {
-    try {
-        console.log('Starting conversion...');
-        const result = await manager.convert('input.mov', 'output.mp4', {
-            videoCodec: 'libx264',
-            videoBitrate: '2000k',
-            resolution: '1280x720',
-            audioCodec: 'aac',
-            audioBitrate: '128k'
-        });
-        console.log('Success!', result);
-    } catch (error) {
-        console.error('An error occurred:', error.message);
-    }
-}
-
-convertVideo();
-```
-## Core Components
-
-FFmpegLib is organized into several powerful components. Choose the one that best fits your needs.
-
-- **[FFmpegCommand](./docs/FFmpegCommand.md)**: For fine-grained, manual control over building and executing FFmpeg commands.
-- **[FFmpegManager](./docs/FFmpegManager.md)**: For high-level process management, job queuing, and event-driven monitoring.
-- **[MediaMetadataExtractor](./docs/MediaMetadataExtractor.md)**: To read and analyze media file properties with FFprobe.
-- **[TestMediaGenerator](./docs/TestMediaGenerator.md)**: A utility to create placeholder media for your test suites.
-- **[HLS Tools](./docs/HLS.md)**: A suite of classes for creating adaptive bitrate streaming content (HLS).
-
-## Full Documentation
-
-For a deep dive into the API and advanced examples, please check our **[full documentation](./docs/)**.
-
-## License
-
-This project is licensed under the MIT License.
+*For more details on operations, see [Getting Started](./docs/getting-started.md).*

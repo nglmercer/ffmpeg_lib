@@ -25,10 +25,10 @@ describe('TestMediaGenerator Tests', () => {
     await fs.ensureDir(testOutputDir);
 
     generator = new TestMediaGenerator(ffmpegPath, testOutputDir);
-  });
+  }, 120000);
 
   afterAll(async () => {
-    await generator.cleanup();
+    await generator?.cleanup();
     if (await fs.pathExists(testOutputDir)) {
       await fs.remove(testOutputDir);
     }
@@ -261,7 +261,7 @@ describe('TestMediaGenerator Tests', () => {
       const filesBefore = await fs.readdir(testOutputDir);
       expect(filesBefore.length).toBeGreaterThan(0);
 
-      await generator.cleanup();
+      await generator?.cleanup();
 
       const filesAfter = await fs.readdir(testOutputDir);
       expect(filesAfter.length).toBe(0);

@@ -60,10 +60,10 @@ First subtitle line
 00:00:05,000 --> 00:00:10,000
 Second subtitle line`;
         await fs.writeFile(testSubtitlePath, srtContent, 'utf8');
-    });
+    }, 120000);
 
     afterAll(async () => {
-        await mediaGenerator.cleanup();
+        await mediaGenerator?.cleanup();
         await fs.remove(testDir);
     });
 
