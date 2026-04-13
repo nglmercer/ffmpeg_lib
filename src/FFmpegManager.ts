@@ -30,11 +30,11 @@ interface CacheManifest {
     ffprobePath: string;
 }
 const logger = {
-    info: (...args: unknown[]) => console.info(`[FFmpegManager]`,...args),
-    error: (...args: unknown[]) => console.error(`[FFmpegManager]`,...args),
-    warn: (...args: unknown[]) => console.warn(`[FFmpegManager]`,...args),
-    debug: (...args: unknown[]) => console.debug(`[FFmpegManager]`,...args),
-    log: (...args: unknown[]) => {return;console.log(`[FFmpegManager]`,...args)}
+    info: (...args: unknown[]) => console.info(`[FFmpegManager]`, ...args),
+    error: (...args: unknown[]) => console.error(`[FFmpegManager]`, ...args),
+    warn: (...args: unknown[]) => console.warn(`[FFmpegManager]`, ...args),
+    debug: (...args: unknown[]) => console.debug(`[FFmpegManager]`, ...args),
+    log: (...args: unknown[]) => { return; console.log(`[FFmpegManager]`, ...args) }
 }
 class FFmpegManager {
     public binariesDir: string;
@@ -43,21 +43,21 @@ class FFmpegManager {
     private cacheFile: string;
     private manifestFile: string;
     private metadataExtractor?: MediaMetadataExtractor;
-    constructor(customBinariesDir?: string) {
+    constructor(customBinariesDir?: string, customUrls?: Partial<FFmpegUrls>) {
         this.binariesDir = customBinariesDir || path.join(__dirname, '..', 'binaries');
         this.platform = this.getPlatform();
         this.cacheFile = path.join(this.binariesDir, '.ffmpeg-cache.json');
         this.manifestFile = path.join(this.binariesDir, '.manifest.json');
-        
-        // URLs actualizadas con versiones específicas
-        this.ffmpegUrls = {
-            // Windows: Gyan.dev releases específicas
+
+        const defaultUrls = {
             'win32': 'https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip',
-            // Linux: Johnvansickle builds estables
             'linux': 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz',
-            // macOS: GitHub releases oficiales o evermeet actualizado
             'darwin': 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip'
         };
+
+
+        // Allow users to override the download links globally or per-platform
+        this.ffmpegUrls = { ...defaultUrls, ...customUrls };
     }
 
     private getPlatform(): string {
@@ -83,7 +83,7 @@ class FFmpegManager {
             // Verificar antigüedad (actualizar si > 30 días)
             const downloadDate = new Date(manifest.downloadDate);
             const daysSinceDownload = (Date.now() - downloadDate.getTime()) / (1000 * 60 * 60 * 24);
-            
+
             if (daysSinceDownload > 30) {
                 logger.log('⏰ Binaries are older than 30 days, update recommended');
                 return true;
@@ -123,7 +123,7 @@ class FFmpegManager {
         return new Promise((resolve, reject) => {
             const hash = crypto.createHash('sha256');
             const stream = fs.createReadStream(filePath);
-            
+
             stream.on('data', (data) => hash.update(data));
             stream.on('end', () => resolve(hash.digest('hex')));
             stream.on('error', reject);
@@ -134,7 +134,7 @@ class FFmpegManager {
         const lockDir = path.join(this.binariesDir, `${lockName}.lock`);
         await fs.ensureDir(this.binariesDir);
         let retries = 60;
-        
+
         while (retries > 0) {
             try {
                 await fs.mkdir(lockDir);
@@ -148,15 +148,15 @@ class FFmpegManager {
                 }
             }
         }
-        
+
         if (retries === 0) {
             throw new Error(`Failed to acquire lock ${lockName} after 60 seconds`);
         }
-        
+
         try {
             return await fn();
         } finally {
-            await fs.rmdir(lockDir).catch(() => {});
+            await fs.rmdir(lockDir).catch(() => { });
         }
     }
 
@@ -166,7 +166,7 @@ class FFmpegManager {
     async downloadFFmpegBinaries(force: boolean = false): Promise<void> {
         return this.withLock('download', async () => {
             logger.log('🔍 Checking FFmpeg binaries...');
-            
+
             // Verificar si necesita actualización
             if (!force) {
                 const needsUpdate = await this.checkForUpdates();
@@ -188,65 +188,65 @@ class FFmpegManager {
             }
 
             logger.log('📥 Downloading FFmpeg binaries...');
-        
-        await fs.ensureDir(this.binariesDir);
-        
-        const url = this.ffmpegUrls[this.platform as keyof FFmpegUrls];
-        if (!url) {
-            throw new Error(`No FFmpeg URL available for platform: ${this.platform}`);
-        }
 
-        const tempDir = path.join(this.binariesDir, 'temp_' + crypto.randomBytes(8).toString('hex'));
-        await fs.ensureDir(tempDir);
+            await fs.ensureDir(this.binariesDir);
 
-        try {
-            // Download with progress indication
-            const response = await fetch(url);
-            
-            if (!response.ok) {
-                throw new Error(`Failed to download FFmpeg: ${response.status} ${response.statusText}`);
+            const url = this.ffmpegUrls[this.platform as keyof FFmpegUrls];
+            if (!url) {
+                throw new Error(`No FFmpeg URL available for platform: ${this.platform}`);
             }
 
-            const filename = path.basename(url.split('?')[0]); // Remove query params
-            const filePath = path.join(tempDir, filename);
-            
-            const arrayBuffer = await response.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-            await fs.writeFile(filePath, buffer);
+            const tempDir = path.join(this.binariesDir, 'temp_' + crypto.randomBytes(8).toString('hex'));
+            await fs.ensureDir(tempDir);
 
-            logger.log('✅ Download completed');
-            
-            // Calculate checksum
-            const checksum = await this.calculateChecksum(filePath);
-            logger.log('🔐 Checksum:', checksum);
+            try {
+                // Download with progress indication
+                const response = await fetch(url);
 
-            logger.log('📦 Extracting binaries...');
-            await this.extractBinaries(filePath, tempDir);
-            
-            logger.log('📋 Installing binaries...');
-            await this.copyBinaries(tempDir);
-            
-            // Verify installation
-            const { ffmpegPath, ffprobePath } = await this.verifyBinaries();
-            
-            // Get version info
-            const version = await this.getFFmpegVersion(ffmpegPath);
-            
-            // Write manifest
-            await this.writeManifest({
-                version,
-                platform: this.platform,
-                checksum,
-                downloadDate: new Date().toISOString(),
-                ffmpegPath,
-                ffprobePath
-            });
-            
-            logger.log('✅ FFmpeg binaries installed successfully!');
-            logger.log(`📌 Version: ${version}`);
-        } finally {
-            await fs.remove(tempDir);
-        }
+                if (!response.ok) {
+                    throw new Error(`Failed to download FFmpeg: ${response.status} ${response.statusText}`);
+                }
+
+                const filename = path.basename(url.split('?')[0]); // Remove query params
+                const filePath = path.join(tempDir, filename);
+
+                const arrayBuffer = await response.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+                await fs.writeFile(filePath, buffer);
+
+                logger.log('✅ Download completed');
+
+                // Calculate checksum
+                const checksum = await this.calculateChecksum(filePath);
+                logger.log('🔐 Checksum:', checksum);
+
+                logger.log('📦 Extracting binaries...');
+                await this.extractBinaries(filePath, tempDir);
+
+                logger.log('📋 Installing binaries...');
+                await this.copyBinaries(tempDir);
+
+                // Verify installation
+                const { ffmpegPath, ffprobePath } = await this.verifyBinaries();
+
+                // Get version info
+                const version = await this.getFFmpegVersion(ffmpegPath);
+
+                // Write manifest
+                await this.writeManifest({
+                    version,
+                    platform: this.platform,
+                    checksum,
+                    downloadDate: new Date().toISOString(),
+                    ffmpegPath,
+                    ffprobePath
+                });
+
+                logger.log('✅ FFmpeg binaries installed successfully!');
+                logger.log(`📌 Version: ${version}`);
+            } finally {
+                await fs.remove(tempDir);
+            }
         });
     }
 
@@ -255,11 +255,11 @@ class FFmpegManager {
      */
     private async getFFmpegVersion(ffmpegPath: string): Promise<string> {
         try {
-            const output = execSync(`"${ffmpegPath}" -version`, { 
+            const output = execSync(`"${ffmpegPath}" -version`, {
                 encoding: 'utf8',
                 stdio: ['pipe', 'pipe', 'pipe']
             });
-            
+
             const match = output.match(/ffmpeg version (\S+)/);
             return match ? match[1] : 'unknown';
         } catch (error) {
@@ -270,7 +270,7 @@ class FFmpegManager {
 
     private async extractBinaries(filePath: string, extractDir: string): Promise<void> {
         const ext = path.extname(filePath);
-        
+
         try {
             if (ext === '.zip') {
                 // Para Windows y macOS zips
@@ -279,7 +279,7 @@ class FFmpegManager {
                 zip.extractAllTo(extractDir, true);
             } else if (filePath.includes('.tar.xz') || filePath.includes('.tar.gz')) {
                 // Para Linux tarballs
-                execSync(`tar -xf "${filePath}" -C "${extractDir}"`, { 
+                execSync(`tar -xf "${filePath}" -C "${extractDir}"`, {
                     stdio: 'inherit',
                     encoding: 'utf8'
                 });
@@ -293,7 +293,7 @@ class FFmpegManager {
 
     private async copyBinaries(tempDir: string): Promise<void> {
         const files = await this.findBinaries(tempDir);
-        
+
         if (files.length === 0) {
             throw new Error('No FFmpeg binaries found in extracted files');
         }
@@ -301,14 +301,14 @@ class FFmpegManager {
         for (const file of files) {
             const filename = path.basename(file);
             const destPath = path.join(this.binariesDir, filename);
-            
+
             await fs.copy(file, destPath, { overwrite: true });
-            
+
             // Make executable on Unix-like systems
             if (this.platform !== 'win32') {
                 await fs.chmod(destPath, 0o755);
             }
-            
+
             logger.log(`✓ Installed: ${filename}`);
         }
     }
@@ -318,22 +318,22 @@ class FFmpegManager {
      */
     private async findBinaries(dir: string): Promise<string[]> {
         const binaries: string[] = [];
-        
+
         const search = async (currentDir: string) => {
             const entries = await fs.readdir(currentDir, { withFileTypes: true });
-            
+
             for (const entry of entries) {
                 const fullPath = path.join(currentDir, entry.name);
-                
+
                 if (entry.isDirectory()) {
                     await search(fullPath);
                 } else {
                     const filename = entry.name.toLowerCase();
                     // Buscar ejecutables específicos
                     if (
-                        filename === 'ffmpeg' || 
+                        filename === 'ffmpeg' ||
                         filename === 'ffmpeg.exe' ||
-                        filename === 'ffprobe' || 
+                        filename === 'ffprobe' ||
                         filename === 'ffprobe.exe'
                     ) {
                         binaries.push(fullPath);
@@ -341,7 +341,7 @@ class FFmpegManager {
                 }
             }
         };
-        
+
         await search(dir);
         return binaries;
     }
@@ -381,10 +381,10 @@ class FFmpegManager {
     async verifyBinaries(): Promise<{ ffmpegPath: string; ffprobePath: string }> {
         const ffmpegPath = this.getFFmpegPath();
         const ffprobePath = this.getFFprobePath();
-        
+
         const ffmpegExists = await fs.pathExists(ffmpegPath);
         const ffprobeExists = await fs.pathExists(ffprobePath);
-        
+
         if (!ffmpegExists || !ffprobeExists) {
             throw new Error(
                 'FFmpeg binaries not found. Please run downloadFFmpegBinaries() first.'
@@ -393,7 +393,7 @@ class FFmpegManager {
 
         // Verificar que son ejecutables válidos
         try {
-            execSync(`"${ffmpegPath}" -version`, { 
+            execSync(`"${ffmpegPath}" -version`, {
                 stdio: 'pipe',
                 encoding: 'utf8'
             });
@@ -429,9 +429,9 @@ class FFmpegManager {
             }
         }
     }
-        /**
-     * Obtiene la instancia del extractor de metadatos
-     */
+    /**
+ * Obtiene la instancia del extractor de metadatos
+ */
     getMetadataExtractor(): MediaMetadataExtractor {
         if (!this.metadataExtractor) {
             const ffprobePath = this.getFFprobePath();
