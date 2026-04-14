@@ -1,6 +1,6 @@
 {
   "name": "ffmpeg-lib",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A comprehensive, fluent, and type-safe Node.js library for programmatic interaction with FFmpeg and FFprobe",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -37,9 +37,6 @@
     "readme.md",
     "docs"
   ],
-  "bin": {
-    "video-processor": "./dist/index.js"
-  },
   "keywords": [
     "ffmpeg",
     "video",
