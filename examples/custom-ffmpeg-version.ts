@@ -11,23 +11,25 @@ import { FFmpegCommand, VideoProcessingOrchestrator, FFmpegManager } from '../sr
 async function generateWithDownloadedBinaries() {
   console.log(`Initializing FFmpegManager to request FFmpeg version 8 (git master)...`);
 
-  // Pass undefined for custom path, and '8' as the requested version to fetch the latest git builds
+  // martin-riedl.de provides precompiled binaries as separate ZIPs per binary.
+  // The "redirect/latest" scripting URLs always points to the latest release build (8.1).
   const manager = new FFmpegManager(undefined, {
-    linux: 'https://www.ffmpeg.org/releases/ffmpeg-8.1.tar.gz',
-    win32: 'https://github.com/GyanD/codexffmpeg/releases/download/8.1/ffmpeg-8.1-full_build-shared.zip',
-
+    linux: 'https://ffmpeg.martin-riedl.de/redirect/latest/linux/amd64/release/ffmpeg.zip',
+    win32: 'https://ffmpeg.martin-riedl.de/redirect/latest/windows/amd64/release/ffmpeg.zip',
+    darwin: 'https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip',
+    // martin-riedl.de distributes ffmpeg and ffprobe as separate ZIP files
+    ffprobe: {
+      linux: 'https://ffmpeg.martin-riedl.de/redirect/latest/linux/amd64/release/ffprobe.zip',
+      win32: 'https://ffmpeg.martin-riedl.de/redirect/latest/windows/amd64/release/ffprobe.zip',
+      darwin: 'https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffprobe.zip',
+    }
   });
 
-  // 1. Check if FFmpeg is available locally or download it
+  // Force download and ignore the cache to get fresh FFmpeg 8.1 binaries
+  console.log('Force downloading FFmpeg 8.1 precompiled binaries...');
   await manager.downloadFFmpegBinaries(true);
-  const isAvailable = await manager.isFFmpegAvailable();
-  if (!isAvailable) {
-    console.log('FFmpeg binaries not found in cache. Downloading them now...');
-    // Setting `true` ensures it attempts to place them in your configured directories
-    console.log('Download complete.');
-  } else {
-    console.log('FFmpeg binaries already exist in cache.');
-  }
+  console.log('Download complete.');
+
 
   // 2. Retrieve the dynamically managed paths
   const binaries = await manager.verifyBinaries();

@@ -7,6 +7,15 @@ interface FFmpegUrls {
     win32: string;
     linux: string;
     darwin: string;
+    /** Optional: separate download URL for the ffprobe binary (per platform).
+     *  Use this when ffmpeg and ffprobe are distributed as separate archives
+     *  (e.g. ffmpeg.martin-riedl.de).
+     */
+    ffprobe?: {
+        win32?: string;
+        linux?: string;
+        darwin?: string;
+    };
 }
 
 interface VersionInfo {
@@ -34,7 +43,7 @@ const logger = {
     error: (...args: unknown[]) => console.error(`[FFmpegManager]`, ...args),
     warn: (...args: unknown[]) => console.warn(`[FFmpegManager]`, ...args),
     debug: (...args: unknown[]) => console.debug(`[FFmpegManager]`, ...args),
-    log: (...args: unknown[]) => { return; console.log(`[FFmpegManager]`, ...args) }
+    log: (...args: unknown[]) => { console.log(`[FFmpegManager]`, ...args) }
 }
 class FFmpegManager {
     public binariesDir: string;
@@ -49,15 +58,19 @@ class FFmpegManager {
         this.cacheFile = path.join(this.binariesDir, '.ffmpeg-cache.json');
         this.manifestFile = path.join(this.binariesDir, '.manifest.json');
 
-        const defaultUrls = {
+        const defaultUrls: FFmpegUrls = {
             'win32': 'https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip',
             'linux': 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz',
             'darwin': 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip'
         };
 
-
         // Allow users to override the download links globally or per-platform
-        this.ffmpegUrls = { ...defaultUrls, ...customUrls };
+        this.ffmpegUrls = {
+            ...defaultUrls,
+            ...customUrls,
+            // Merge nested ffprobe URLs
+            ffprobe: { ...defaultUrls.ffprobe, ...customUrls?.ffprobe }
+        };
     }
 
     private getPlatform(): string {
@@ -165,7 +178,7 @@ class FFmpegManager {
      */
     async downloadFFmpegBinaries(force: boolean = false): Promise<void> {
         return this.withLock('download', async () => {
-            logger.log('🔍 Checking FFmpeg binaries...');
+            logger.log('Checking FFmpeg binaries...');
 
             // Verificar si necesita actualización
             if (!force) {
@@ -174,56 +187,38 @@ class FFmpegManager {
                     logger.log('✅ FFmpeg binaries are up to date');
                     return;
                 }
-            } else if (await this.isFFmpegAvailable()) {
-                // If forced, but another process just downloaded it while we waited for the lock,
-                // we can just return instead of downloading again.
-                // We'll skip this optimization to match `force=true` strictly,
-                // but since it's primarily used in concurrent tests, skipping if available 
-                // minimizes redundant downloads inside the lock.
-                const needsUpdate = await this.checkForUpdates();
-                if (!needsUpdate) {
-                    logger.log('✅ FFmpeg binaries are up to date (after lock)');
-                    return;
-                }
             }
 
-            logger.log('📥 Downloading FFmpeg binaries...');
+
+            logger.log('Downloading FFmpeg binaries...');
 
             await fs.ensureDir(this.binariesDir);
 
-            const url = this.ffmpegUrls[this.platform as keyof FFmpegUrls];
-            if (!url) {
+            const ffmpegUrl = this.ffmpegUrls[this.platform as keyof Omit<FFmpegUrls, 'ffprobe'>];
+            if (!ffmpegUrl || typeof ffmpegUrl !== 'string') {
                 throw new Error(`No FFmpeg URL available for platform: ${this.platform}`);
             }
+
+            // Optional separate ffprobe URL (e.g. martin-riedl.de distributes them separately)
+            const ffprobeUrl = this.ffmpegUrls.ffprobe?.[this.platform as 'win32' | 'linux' | 'darwin'];
 
             const tempDir = path.join(this.binariesDir, 'temp_' + crypto.randomBytes(8).toString('hex'));
             await fs.ensureDir(tempDir);
 
             try {
-                // Download with progress indication
-                const response = await fetch(url);
+                // --- Download ffmpeg archive ---
+                await this.downloadFile(ffmpegUrl, tempDir, 'ffmpeg');
 
-                if (!response.ok) {
-                    throw new Error(`Failed to download FFmpeg: ${response.status} ${response.statusText}`);
+                // --- Download ffprobe archive (if a separate URL is configured) ---
+                if (ffprobeUrl) {
+                    await this.downloadFile(ffprobeUrl, tempDir, 'ffprobe');
                 }
 
-                const filename = path.basename(url.split('?')[0]); // Remove query params
-                const filePath = path.join(tempDir, filename);
+                // Calculate checksum of the first (main) file for manifest
+                const mainFile = path.join(tempDir, path.basename(ffmpegUrl.split('?')[0]));
+                const checksum = await this.calculateChecksum(mainFile);
+                logger.log('Checksum:', checksum);
 
-                const arrayBuffer = await response.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
-                await fs.writeFile(filePath, buffer);
-
-                logger.log('✅ Download completed');
-
-                // Calculate checksum
-                const checksum = await this.calculateChecksum(filePath);
-                logger.log('🔐 Checksum:', checksum);
-
-                logger.log('📦 Extracting binaries...');
-                await this.extractBinaries(filePath, tempDir);
-
-                logger.log('📋 Installing binaries...');
                 await this.copyBinaries(tempDir);
 
                 // Verify installation
@@ -242,12 +237,32 @@ class FFmpegManager {
                     ffprobePath
                 });
 
-                logger.log('✅ FFmpeg binaries installed successfully!');
-                logger.log(`📌 Version: ${version}`);
+                logger.log(` Version: ${version}`);
             } finally {
                 await fs.remove(tempDir);
             }
         });
+    }
+
+    /**
+     * Downloads a single file from a URL and extracts it into destDir.
+     */
+    private async downloadFile(url: string, destDir: string, label: string): Promise<void> {
+        logger.log(`📥 Downloading ${label} from: ${url}`);
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to download ${label}: ${response.status} ${response.statusText}`);
+        }
+
+        const filename = path.basename(url.split('?')[0]) || `${label}.bin`;
+        const filePath = path.join(destDir, filename);
+
+        const arrayBuffer = await response.arrayBuffer();
+        await fs.writeFile(filePath, Buffer.from(arrayBuffer));
+        logger.log(`✅ ${label} download completed (${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)} MB)`);
+
+        logger.log(`📦 Extracting ${label}...`);
+        await this.extractBinaries(filePath, destDir);
     }
 
     /**
